@@ -1,0 +1,62 @@
+# Local environments and caches
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage*
+htmlcov/
+node_modules/
+
+# Credentials and local overrides (never commit real values)
+.env
+.env.*
+!.env.example
+config.local.*
+credentials.json
+secrets.*
+*.pem
+*.key
+*.pfx
+*.p12
+
+# User questions, textbooks, databases, logs and outputs
+data/
+output/
+exports/
+backups/
+kaoyan-import/
+work/
+*.db
+*.db-*
+*.sqlite*
+*.pdf
+*.xlsx
+*.xlsm
+*.docx
+*.log
+
+# Build artifacts / offline model weights
+build/
+dist/
+frontend/dist/
+release/
+installer-output/
+models/*
+!models/MODEL-MANIFEST.json
+*.exe
+*.bin
+*.onnx
+*.pt
+*.safetensors
+*.zip
+*.7z
+_build-info.json
+
+# Private local-agent history and user handoff notes
+.codex/
+.agents/
+.superpowers/
+.smoke/
+HANDOFF.md
+.idea/
+.vscode/

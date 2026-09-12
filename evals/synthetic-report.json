@@ -1,0 +1,30 @@
+{
+  "offline": {
+    "samples": 2,
+    "recallAt3": 0.5,
+    "mrrAt3": 0.5,
+    "falseMatchRate": 0.0,
+    "citationPageErrors": 0,
+    "schemaErrors": 0,
+    "gradeRules": {
+      "A": {"total": 1, "passed": 1},
+      "B": {"total": 0, "passed": 0},
+      "C": {"total": 1, "passed": 1}
+    }
+  },
+  "baseline": {
+    "samples": 2,
+    "recallAt3": 0.5,
+    "mrrAt3": 0.5,
+    "falseMatchRate": 0.0,
+    "citationPageErrors": 0,
+    "schemaErrors": 0,
+    "gradeRules": {
+      "A": {"total": 1, "passed": 1},
+      "B": {"total": 0, "passed": 0},
+      "C": {"total": 1, "passed": 1}
+    }
+  },
+  "qualityGate": {"passed": false, "recallDelta": 0.0, "mrrDelta": 0.0},
+  "judge": {"status": "not_requested"}
+}

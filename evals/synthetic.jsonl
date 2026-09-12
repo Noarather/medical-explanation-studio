@@ -1,0 +1,2 @@
+{"id":"synthetic-a","grade":"A","relevant_chunk_ids":["c1"],"candidates":[{"chunk_id":"c1","cosine":0.82,"rerank_score":0.91,"pdf_page":10},{"chunk_id":"c2","cosine":0.61,"rerank_score":0.2,"pdf_page":11}],"question":"合成题干","answer":"合成答案","evidence":["合成教材证据"],"degraded":false}
+{"id":"synthetic-c","grade":"C","relevant_chunk_ids":[],"candidates":[{"chunk_id":"c3","cosine":0.22,"rerank_score":0.1,"pdf_page":null}],"question":"无教材依据的合成题","answer":"通识答案","evidence":[],"degraded":true}

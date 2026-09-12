@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "medlearning-question-set-v2.schema.json",
+  "title": "MedLearning Question Exchange v2",
+  "type": "object",
+  "required": ["schema", "schemaVersion", "meta", "tagCatalog", "questions"],
+  "properties": {
+    "schema": { "const": "medlearning.question-set" },
+    "schemaVersion": { "const": 2 },
+    "meta": {
+      "type": "object",
+      "required": ["name", "bank", "source", "exportedAt", "questionCount"],
+      "properties": {
+        "name": { "type": "string" }, "bank": { "enum": ["school", "kaoyan"] },
+        "source": { "type": "string" }, "exportedAt": { "type": "string" },
+        "questionCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "tagCatalog": { "type": "array", "items": { "$ref": "#/$defs/tagCatalog" } },
+    "questions": { "type": "array", "items": { "$ref": "#/$defs/question" } }
+  },
+  "$defs": {
+    "tagList": { "type": "array", "maxItems": 3, "uniqueItems": true, "items": { "type": "string", "minLength": 2, "maxLength": 24 } },
+    "knowledgeList": { "type": "array", "maxItems": 3, "uniqueItems": true, "items": { "type": "string", "minLength": 2, "maxLength": 60 } },
+    "studyPoint": { "type": "object", "required": ["title", "body"], "additionalProperties": false, "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 20 }, "body": { "type": "string", "minLength": 1, "maxLength": 300 } } },
+    "memoryCard": { "type": "object", "required": ["title", "content"], "additionalProperties": false, "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 30 }, "content": { "type": "string", "minLength": 1, "maxLength": 500 }, "memoryCue": { "type": "string", "maxLength": 160 }, "contrast": { "type": "string", "maxLength": 300 } } },
+    "optionExplanation": { "type": "object", "required": ["option", "explanation"], "additionalProperties": false, "properties": { "option": { "enum": ["A", "B", "C", "D", "E"] }, "explanation": { "type": "string", "minLength": 1, "maxLength": 1200 }, "typicalScenario": { "type": "string", "maxLength": 500 } } },
+    "reasoningStep": { "type": "object", "required": ["evidence", "inference"], "additionalProperties": false, "properties": { "evidence": { "type": "string", "minLength": 1, "maxLength": 500 }, "inference": { "type": "string", "minLength": 1, "maxLength": 500 } } },
+    "tagCatalog": {
+      "type": "object", "required": ["subject", "label", "status"],
+      "properties": { "subject": { "type": "string" }, "label": { "type": "string", "maxLength": 24 }, "aliases": { "type": "array", "items": { "type": "string" } }, "status": { "enum": ["active", "candidate", "merged"] }, "usageCount": { "type": "integer", "minimum": 0 }, "mergedInto": { "type": "string" } }
+    },
+    "block": {
+      "type": "object", "required": ["blockId", "section", "type"],
+      "properties": {
+        "blockId": { "type": "string" }, "section": { "enum": ["analysis", "answerBasis", "pitfalls", "clinicalNotes"] },
+        "type": { "enum": ["paragraph", "list", "table", "callout"] }, "title": { "type": "string", "maxLength": 40 },
+        "text": { "type": "string", "maxLength": 4000 }, "tone": { "enum": ["info", "important", "warning"] },
+        "items": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 500 } },
+        "columns": { "type": "array", "minItems": 2, "maxItems": 5, "items": { "type": "string", "maxLength": 80 } },
+        "rows": { "type": "array", "maxItems": 20, "items": { "type": "array", "maxItems": 5, "items": { "type": "string", "maxLength": 500 } } }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "textbook": { "type": "string" }, "version": { "type": "string" }, "fileName": { "type": "string" },
+        "sourcePage": { "type": ["integer", "null"], "minimum": 1 }, "pdfPage": { "type": ["integer", "null"], "minimum": 1 },
+        "score": { "type": "number" }, "extractionMethod": { "type": "string" },
+        "excerpt": { "type": "string", "maxLength": 500 },
+        "contextSummary": { "type": "string", "maxLength": 500 },
+        "highlights": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 120 } },
+        "supportedClues": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 120 } },
+        "quote": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "question": {
+      "type": "object",
+      "required": ["id", "bank", "type", "subject", "system", "question", "options", "answer", "explanation", "explanationBlocks", "knowledgePoints", "tags", "suggestedTags"],
+      "properties": {
+        "id": { "type": "string" }, "bank": { "enum": ["school", "kaoyan"] }, "questionSource": { "type": "string", "maxLength": 40 }, "type": { "enum": ["A1", "A2", "A3", "multiple", "judge", "fill"] },
+        "subject": { "type": "string" }, "system": { "type": "string" }, "question": { "type": "string" }, "options": { "type": "array", "items": { "type": "string" } }, "answer": { "anyOf": [ { "type": "string" }, { "type": "array", "minItems": 1, "items": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 60 } } } ] },
+        "explanation": { "type": "string" }, "briefExplanation": { "type": "string", "maxLength": 160 }, "explanationBlocks": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/block" } },
+        "optionExplanations": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/optionExplanation" } },
+        "reasoningSteps": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/reasoningStep" } },
+        "frequencyLevel": { "enum": ["high", "medium", "low", ""] },
+        "questionRevision": { "type": "string", "maxLength": 40 },
+        "knowledgePoints": { "$ref": "#/$defs/knowledgeList" }, "tags": { "$ref": "#/$defs/tagList" }, "suggestedTags": { "$ref": "#/$defs/tagList" },
+        "studyPoints": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/studyPoint" } },
+        "memoryCards": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/memoryCard" } },
+        "memoryCardMeta": { "type": "object", "additionalProperties": false, "properties": { "schemaVersion": { "type": "integer", "minimum": 1, "maximum": 10 }, "generator": { "type": "string", "maxLength": 80 }, "generatedAt": { "type": "string", "maxLength": 40 } } },
+        "mnemonic": { "type": "string", "maxLength": 1000 },
+        "explanationMeta": { "type": "object", "properties": {
+          "mode": { "type": "string" }, "model": { "type": "string" },
+          "evidenceGrade": { "enum": ["A", "B", "C", ""] },
+          "reasoningType": { "enum": ["direct_answer", "case_chain", ""] },
+          "thinking": { "type": "boolean" }, "modelFallback": { "type": "boolean" }, "complexityScore": { "type": "number" },
+          "routeReasons": { "type": "array", "items": { "type": "string" } },
+          "requestCount": { "type": "integer", "minimum": 0 },
+          "reviewWarnings": { "type": "array", "items": { "type": "string" } },
+          "generationTrace": { "type": "array", "items": { "type": "object" } },
+          "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+        } },
+        "extensions": { "type": "object" }
+      }
+    }
+  }
+}

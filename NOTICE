@@ -1,0 +1,12 @@
+MedExplain Studio / 医学题库智能解析
+Copyright (C) 2026 Noarather and contributors
+
+Project-authored source code is licensed under the GNU Affero General Public
+License, version 3 only (SPDX: AGPL-3.0-only). See LICENSE for the full terms.
+This software is distributed WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Third-party packages, fonts, icons and model weights retain their respective
+licenses. This repository does not redistribute installed dependencies, model
+weights, textbooks, user question banks, databases or historical installers.
+See THIRD_PARTY_NOTICES.md before building or distributing binary packages.

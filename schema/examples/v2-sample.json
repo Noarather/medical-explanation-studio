@@ -1,0 +1,18 @@
+{
+  "schema": "medlearning.question-set",
+  "schemaVersion": 2,
+  "meta": { "name": "结构化解析示例", "bank": "school", "source": "golden-fixture", "exportedAt": "2026-07-15T00:00:00Z", "questionCount": 1 },
+  "tagCatalog": [{ "subject": "实验诊断学", "label": "尿标本采集", "aliases": [], "status": "active", "usageCount": 2, "mergedInto": "" }],
+  "questions": [{
+    "id": "school_demo_urine_001", "bank": "school", "questionSource": "本校章节题", "type": "A1", "subject": "实验诊断学", "system": "尿液检查", "difficulty": "medium", "caseInfo": "", "question": "常规尿细菌培养宜选择的标本是", "options": ["A. 清洁中段尿", "B. 24小时尿", "C. 随机尿", "D. 晨尿"], "answer": "A",
+    "explanation": "", "briefExplanation": "清洁中段尿可减少尿道口污染，适合常规尿细菌培养。", "knowledgePoint": "清洁中段尿适用于尿细菌培养", "knowledgePoints": ["清洁中段尿适用于尿细菌培养"], "tags": ["尿标本采集"], "suggestedTags": [], "mnemonic": "", "year": null,
+    "memoryCards": [{ "title": "尿培养标本的污染控制", "content": "微生物培养标本的价值取决于采集过程能否最大限度排除定植菌干扰。采集前完成局部清洁，排尿开始阶段用于冲刷尿道，随后留取中段部分并尽快送检；若延迟处理，应按实验室规范低温保存。", "memoryCue": "清洁—弃前段—留中段—快送检", "contrast": "导尿和膀胱穿刺能进一步降低污染，但侵入性更高，应根据患者配合程度和诊断要求选择。" }],
+    "memoryCardMeta": { "schemaVersion": 1, "generator": "analysis-tool", "generatedAt": "2026-07-28T00:00:00Z" },
+    "explanationBlocks": [
+      { "blockId": "b01", "section": "analysis", "type": "table", "title": "方法选择阶梯", "columns": ["使用场景", "推荐方法", "说明"], "rows": [["常规且可配合成人", "清洁中段尿", "首选"], ["无法自行排尿", "导尿", "有创备选"], ["要求绝对避免污染", "膀胱穿刺", "诊断金标准"]] },
+      { "blockId": "b02", "section": "clinicalNotes", "type": "callout", "title": "操作关键点", "tone": "important", "text": "留取前清洁尿道口并弃去前段尿，只保留中段部分。" }
+    ],
+    "explanationMeta": { "mode": "textbook", "model": "deepseek-v4-flash", "evidenceGrade": "A", "reasoningType": "direct_answer", "thinking": false, "score": 0.82, "generatedAt": "2026-07-15T00:00:00Z", "reviewedAt": "", "evidence": [{ "textbook": "实验诊断学", "version": "第10版", "fileName": "实验诊断学.pdf", "sourcePage": 88, "pdfPage": 103, "excerpt": "尿细菌培养宜留取清洁中段尿。", "contextSummary": "尿细菌培养宜留取清洁中段尿。", "supportedClues": ["题目核心"], "quote": "尿细菌培养宜留取清洁中段尿。", "score": 0.82, "extractionMethod": "text" }] },
+    "extensions": {}
+  }]
+}

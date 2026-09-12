@@ -1,0 +1,59 @@
+deepseek:
+  api_key: "${DEEPSEEK_API_KEY}"
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-v4-flash"
+  temperature: 0.3
+  max_tokens: 2200
+
+generation:
+  concurrency: 8
+  adaptive_concurrency: true
+  smart_routing: true
+  hard_use_pro: true
+  hard_model: "deepseek-v4-pro"
+  pro_concurrency: 2
+  force_flash: false
+  max_retries: 3
+  request_timeout_seconds: 180
+  success_ramp_window: 20
+
+dashscope:
+  api_key: "${DASHSCOPE_API_KEY}"
+  base_url: "https://dashscope.aliyuncs.com/api/v1"
+  model: "text-embedding-v4"
+  ocr_model: "qwen-vl-ocr"
+  dimension: 1024
+  batch_size: 10
+
+docling:
+  version: "2.117.0"
+  model_dir: "models/docling"
+  model_manifest: "models/MODEL-MANIFEST.json"
+  page_batch_size: 8
+
+retrieval:
+  bm25_top_k: 20
+  final_top_k: 3
+  chunk_size: 500
+  chunk_overlap: 50
+  similarity_threshold: 0.5
+  generate_fallback: false
+  rerank:
+    enabled: true
+    model: "qwen3-rerank"
+    candidate_count: 20
+    timeout_seconds: 30
+    calibrated_alpha: null
+    calibrated_threshold: null
+  subject_aliases:
+    外基: 外科学
+    外科: 外科学
+    外科学基础: 外科学
+    生物化学: 生物化学与分子生物学
+
+database:
+  path: "${MEDEXPLAIN_DATABASE_PATH}"
+
+memory_guard:
+  max_memory_mb: 2048
+  batch_process_size: 50
