@@ -53,6 +53,8 @@ def resolved_config(path: str, database_override: str | None = None) -> dict:
             ("dashscope_base_url", "dashscope", "base_url"),
         ):
             config[section][key] = database.get_setting(setting, config[section][key])
+        from ocr_client import effective_ocr_model
+        config["dashscope"]["ocr_model"] = effective_ocr_model(config["dashscope"]["ocr_model"])
         config["retrieval"]["similarity_threshold"] = float(database.get_setting("similarity_threshold", config["retrieval"]["similarity_threshold"]))
         rerank = config["retrieval"].setdefault("rerank", {})
         enabled = str(database.get_setting("rerank_enabled", rerank.get("enabled", True))).strip().lower()

@@ -45,7 +45,7 @@ def run_job(job_id: str) -> int:
                 embedding = _embedding(config)
                 dash = config["dashscope"]
                 ocr = QwenOCRClient(
-                    dash["api_key"], dash.get("ocr_model", "qwen-vl-ocr"), dash.get("base_url", ""),
+                    dash["api_key"], dash.get("ocr_model", "qwen3.5-ocr"), dash.get("base_url", ""),
                 )
                 result = TextbookService(database, config, embedding, ocr).scan_library(
                     int(job["payload"]["library_id"]), bool(job["payload"].get("force_ocr")), control,

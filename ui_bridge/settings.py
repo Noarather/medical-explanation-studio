@@ -19,7 +19,7 @@ SETTINGS_DEFAULTS: dict[str, str] = {
     "deepseek_model": "deepseek-v4-flash",
     "deepseek_base_url": "https://api.deepseek.com/v1",
     "embedding_model": "text-embedding-v4",
-    "ocr_model": "qwen-vl-ocr",
+    "ocr_model": "qwen3.5-ocr",
     "dashscope_base_url": "https://dashscope.aliyuncs.com/api/v1",
     "similarity_threshold": "0.5",
     "rerank_enabled": "true",
@@ -55,6 +55,8 @@ class SettingsBridge(BridgeBase):
                 key: database.get_setting(key, default)
                 for key, default in SETTINGS_DEFAULTS.items()
             }
+        from ocr_client import effective_ocr_model
+        settings["ocr_model"] = effective_ocr_model(settings["ocr_model"])
         store = CredentialStore()
         return {
             "settings": settings,

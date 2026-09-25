@@ -12,7 +12,7 @@ if (-not (Test-Path ".venv")) {
 $python = ".\.venv\Scripts\python.exe"
 
 if (-not $created) {
-    & $python -c "import yaml, fitz, numpy, psutil, openpyxl, docx, keyring, openai, dashscope, PySide6, docling, rapidocr, onnxruntime, instructor, httpx" 2>$null
+    & $python -c "import yaml, fitz, numpy, psutil, openpyxl, docx, keyring, openai, dashscope, PySide6, instructor, httpx" 2>$null
     $needsInstall = $LASTEXITCODE -ne 0
 } else {
     $needsInstall = $true

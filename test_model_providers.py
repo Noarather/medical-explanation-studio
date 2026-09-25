@@ -36,7 +36,6 @@ def test_normalize_endpoints(protocol, url, expected):
     assert normalized_url(url, protocol) == expected
 
 
-# Assemble synthetic userinfo so the source safety gate still rejects real URL credentials.
 @pytest.mark.parametrize("url", ["api.test", "file:///a", "https://" + "key:secret@a.test", "https://a.test?key=secret", "https://a.test:bad"])
 def test_invalid_urls_are_rejected(url):
     with pytest.raises(ValueError): normalized_url(url)
@@ -163,8 +162,8 @@ def test_save_and_runtime_use_correct_database_and_no_deepseek_hard_model(bridge
 def test_missing_parser_dependencies_are_readable(monkeypatch, tmp_path):
     monkeypatch.setattr("parser_health.importlib.util.find_spec", lambda name: None)
     health = parser_health(tmp_path)
-    assert not health["ok"] and health["missing"] == ["docling", "rapidocr", "onnxruntime"]
-    assert "run_desktop.ps1" in health["message"]
+    assert not health["ok"] and health["missing"] == ["fitz", "openai"]
+    assert "缺少依赖" in health["message"]
     message = index_error_summary("docling: No module named 'docling'; docling: No module named 'docling'; rapidocr: No module named 'rapidocr'")
     assert message.count("docling") == 1 and "重试异常索引" in message
 
@@ -199,12 +198,14 @@ def test_warning_rescan_keeps_ready_fast_path_and_backs_up(tmp_path, monkeypatch
         assert db.get_file_by_path(str(pdf.resolve()))["status"] == "ready"
 
 
-def test_rapidocr_new_output_format_and_temp_cleanup(tmp_path):
+def test_cloud_ocr_failure_cleans_temporary_image(tmp_path):
     from pdf_parser import PDFParser
     p = PDFParser()
     image = tmp_path / "page.png"
     image.write_bytes(b"test")
     p._render_page = lambda page: str(image)
-    p._rapidocr = lambda path: SimpleNamespace(txts=("one", "two"))
-    assert p._rapid_ocr(None) == "one\ntwo"
+    page = SimpleNamespace(get_text=lambda *args, **kwargs: "")
+    ocr = SimpleNamespace(recognize_image=Mock(side_effect=RuntimeError("offline")))
+    with pytest.raises(RuntimeError, match="offline"):
+        p._extract_page(page, 1, ocr, True)
     assert not image.exists()

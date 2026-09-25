@@ -129,10 +129,7 @@ def bundle_self_check() -> int:
     import fitz  # noqa: F401
     import jieba  # noqa: F401
     import openpyxl  # noqa: F401
-    import docling  # noqa: F401
     import instructor  # noqa: F401
-    import onnxruntime  # noqa: F401
-    import rapidocr  # noqa: F401
     from keyring.backends import Windows  # noqa: F401
     from PySide6.QtSvg import QSvgRenderer  # noqa: F401
     from PySide6.QtWebChannel import QWebChannel as _QWebChannel  # noqa: F401

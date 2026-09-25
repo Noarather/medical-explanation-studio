@@ -18,51 +18,24 @@ def synthetic_pdf(path, count=1):
     return path
 
 
-def test_unicode_stream_keeps_original_pages_batches_and_closes_buffers(tmp_path, monkeypatch):
-    pytest.importorskip("docling")
+def test_unicode_text_pages_preserve_order_and_source(tmp_path):
     path = synthetic_pdf(tmp_path / "中文目录" / "教材（第10版）.pdf", 9)
     original = path.read_bytes()
-    seen = []
-
-    class Converter:
-        def convert(self, source, *, page_range):
-            assert source.stream.read() == original
-            source.stream.seek(0)
-            assert source.name == "document.pdf"
-            seen.append((page_range, source.stream))
-            return SimpleNamespace(document=SimpleNamespace(
-                export_to_markdown=lambda **kwargs: f"Synthetic physical page {kwargs['page_no']}"))
-
-    parser = PDFParser()
-    monkeypatch.setattr(parser, "_docling_converter", lambda: Converter())
-    monkeypatch.setattr(type(path), "read_bytes", lambda _path: pytest.fail("read_bytes must not be used"))
     progress = []
-    pages = parser.extract_pages(path, progress=lambda a, b: progress.append((a, b)))
-    assert [r[0] for r in seen] == [(1, 8), (9, 9)]
-    assert all(r[1].closed for r in seen)
-    assert [p["page_number"] for p in pages] == list(range(1, 10))
-    assert pages[-1]["text"] == "Synthetic physical page 9"
-    assert all(p["extraction_method"] == "docling" and not p["error_message"] for p in pages)
-    assert progress == [(8, 9), (9, 9)]
+    pages = PDFParser().extract_pages(path, progress=lambda a,b: progress.append((a,b)))
+    assert path.read_bytes() == original
+    assert [p["page_number"] for p in pages] == list(range(1,10))
+    assert all(p["extraction_method"] == "text" and not p["error_message"] for p in pages)
+    assert progress == [(i,9) for i in range(1,10)]
 
 
-def test_unicode_stream_failure_closes_buffer_and_preserves_local_fallback(tmp_path, monkeypatch):
-    pytest.importorskip("docling")
-    path = synthetic_pdf(tmp_path / "损坏解析路径" / "教材.pdf")
-    seen = []
-
-    class BrokenConverter:
-        def convert(self, source, **kwargs):
-            seen.append(source.stream)
-            raise RuntimeError("synthetic conversion failure")
-
-    parser = PDFParser()
-    monkeypatch.setattr(parser, "_docling_converter", lambda: BrokenConverter())
-    pages = parser.extract_pages(path)
-    assert seen[0].closed
-    assert pages[0]["extraction_method"] == "docling_fallback"
-    assert "synthetic conversion failure" in pages[0]["error_message"]
-    assert "Synthetic offline textbook" in pages[0]["text"]
+def test_cloud_error_preserves_source_and_is_not_blank(tmp_path):
+    path = synthetic_pdf(tmp_path / "中文目录" / "教材.pdf")
+    original = path.read_bytes()
+    ocr = SimpleNamespace(recognize_image=lambda path: "")
+    with pytest.raises(RuntimeError, match="第 1 页.*空内容"):
+        PDFParser().extract_pages(path, ocr, force_ocr=True)
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize("method,error,degraded", [
@@ -92,7 +65,7 @@ def test_index_completion_exposes_degradation_without_discarding_chunks(tmp_path
 
 
 def test_native_loader_failure_has_readable_summary():
-    error = "docling: Conversion failed; docling-parse could not load document abc: Failed to load document with key key=C:/fixtures/教材/测试.pdf"
+    error = "docling: Conversion failed; docling-parse could not load document abc: Failed to load document with key key=C:/fixtures/synthetic.pdf"
     summary = index_error_summary(error)
     assert "不等于没有索引" in summary
     assert "技术详情" in summary

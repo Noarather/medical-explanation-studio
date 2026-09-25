@@ -20,7 +20,7 @@ const GROUPS: { id: string; label: string; fields: FieldDef[] }[] = [
     label: "向量 / OCR",
     fields: [
       { key: "embedding_model", label: "Embedding 模型", type: "text" },
-      { key: "ocr_model", label: "OCR 模型", type: "text" },
+        { key: "ocr_model", label: "云端 OCR 模型（推荐 qwen3.5-ocr）", type: "text" },
       { key: "dashscope_base_url", label: "DashScope Base URL", type: "text" },
     ],
   },

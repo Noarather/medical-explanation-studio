@@ -37,7 +37,7 @@ class ShellSmokeTest(unittest.TestCase):
 
     def test_bundle_self_check_returns_zero(self) -> None:
         try:
-            import docling, instructor, onnxruntime, rapidocr  # noqa: F401
+            import instructor, openai, fitz  # noqa: F401
         except ImportError:
             self.skipTest("打包重依赖仅存在于构建环境（.venv-build），跳过探针验证")
         from desktop_app import bundle_self_check

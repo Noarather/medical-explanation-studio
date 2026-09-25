@@ -1,5 +1,5 @@
 ﻿#define MyAppName "医学题库智能解析"
-#define MyAppVersion "2.1.3"
+#define MyAppVersion "2.2.0"
 #define MyAppExeName "MedExplainStudio.exe"
 
 [Setup]
@@ -28,6 +28,19 @@ SetupIconFile=assets\app_icon.ico
 
 [Files]
 Source: "dist\MedExplainStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; 2.2.0 cloud-only migration: remove only app-owned obsolete AI resources.
+; User data lives outside {app}; previous installers remain available for recovery.
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal\models"
+Type: filesandordirs; Name: "{app}\_internal\docling"
+Type: filesandordirs; Name: "{app}\_internal\docling_core"
+Type: filesandordirs; Name: "{app}\_internal\docling_parse"
+Type: filesandordirs; Name: "{app}\_internal\rapidocr"
+Type: filesandordirs; Name: "{app}\_internal\onnxruntime"
+Type: filesandordirs; Name: "{app}\_internal\torch"
+Type: filesandordirs; Name: "{app}\_internal\torchvision"
+Type: filesandordirs; Name: "{app}\_internal\transformers"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

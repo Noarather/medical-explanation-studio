@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QFileDialog
 
 from db_manager import DatabaseManager
-from index_profile import build_index_profile, index_fingerprint
+from index_profile import build_index_profile, index_fingerprint, retrieval_compatible
 from runtime_config import runtime_config
 from ui_bridge.protocol import BridgeBase
 from parser_health import index_error_summary
@@ -45,11 +45,14 @@ class LibraryBridge(BridgeBase):
         self._tasks = BatchTasks()
 
     def api_list(self) -> dict:
-        current = index_fingerprint(build_index_profile(runtime_config()))
+        profile = build_index_profile(runtime_config())
+        current = index_fingerprint(profile)
         with DatabaseManager(self._database_path) as database:
             libraries = database.list_libraries()
         for row in libraries:
             row["index_state"] = _index_state(row, current)
+            if row["index_state"] == "stale" and retrieval_compatible(row, profile):
+                row["index_state"] = "compatible"
             row["file_error_summary"] = index_error_summary(row.get("file_error") or "")
             row["calibration"] = json.loads(row.get("calibration_json") or "{}")
         return {"libraries": libraries, "current_fingerprint": current}
@@ -62,7 +65,11 @@ class LibraryBridge(BridgeBase):
         if not isinstance(paths, list) or not 1 <= len(paths) <= 100 or any(not isinstance(p, str) for p in paths):
             raise ValueError("bad_payload: 每批请选择 1～100 个 PDF")
         def inspect(progress):
-            inspector, items, seen = TextbookInspector(), [], set()
+            config = runtime_config(database_override=self._database_path)
+            from ocr_client import QwenOCRClient
+            dash = config["dashscope"]
+            ocr = QwenOCRClient(dash["api_key"], dash["ocr_model"], dash.get("base_url", "")) if dash.get("api_key") else None
+            inspector, items, seen = TextbookInspector(ocr_client=ocr), [], set()
             for index, path in enumerate(paths):
                 progress(f"识别教材 {index+1}/{len(paths)}", index, len(paths))
                 source = Path(path).resolve()

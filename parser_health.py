@@ -7,28 +7,14 @@ import re
 import sys
 from pathlib import Path
 
-PARSER_MODULES = ("docling", "rapidocr", "onnxruntime")
+PARSER_MODULES = ("fitz", "openai")
 
 
 def parser_health(model_dir=None) -> dict:
-    missing = []
-    for name in PARSER_MODULES:
-        try:
-            available = importlib.util.find_spec(name) is not None
-        except (ImportError, ValueError, AttributeError):
-            available = False
-        if not available:
-            missing.append(name)
-    root = Path(model_dir or os.getenv("MEDEXPLAIN_DOCLING_MODELS") or Path(__file__).resolve().parent / "models" / "docling")
-    models = root.is_dir() and all(next(root.rglob(pattern), None) for pattern in ("*det*.onnx", "*rec*.onnx", "*cls*.onnx"))
-    packaged = bool(getattr(sys, "frozen", False))
-    hint = ("请使用最新版安装包覆盖安装，并确认 EXE 与全部 BIN 在同一目录。" if packaged
-            else "请通过 run_desktop.ps1 启动，它会补装 requirements.txt 中的解析依赖。")
-    issues = (["缺少解析依赖：" + "、".join(missing)] if missing else [])
-    if not models:
-        issues.append("未找到完整的本地 OCR 模型，请检查 models/docling 目录")
-    return {"ok": not issues, "missing": missing, "models_available": bool(models),
-            "message": "；".join(issues) + ("。" + hint if issues else "") if issues else "解析依赖及本地 OCR 模型文件可用。此检查不替代实际 PDF 解析。"}
+    missing = [name for name in PARSER_MODULES if importlib.util.find_spec(name) is None]
+    return {"ok": not missing, "missing": missing, "models_available": False,
+            "mode": "cloud-text", "message": "缺少依赖：" + "、".join(missing) if missing else
+            "文本提取环境可用；扫描页通过 DashScope 云端 OCR，不需要本地模型。此检查不验证密钥或云端权限。"}
 
 
 def index_error_summary(error: str) -> str:
@@ -53,7 +39,7 @@ def index_error_summary(error: str) -> str:
 
 
 def parser_smoke_check(report_path: str) -> None:
-    """Packaging probe: parse synthetic content using bundled models, with no APIs."""
+    """Packaging probe: parse synthetic content with a mock cloud OCR client, with no APIs."""
     import json
     import tempfile
     import fitz
@@ -67,15 +53,19 @@ def parser_smoke_check(report_path: str) -> None:
             with fitz.open() as doc:
                 doc.new_page().insert_text((72, 72), "Clinical medicine textbook\nPhysical examination and diagnosis\nPatient assessment and treatment", fontsize=18)
                 doc.save(pdf)
-            parser = PDFParser(model_dir=Path(__file__).resolve().parent / "models" / "docling")
+            parser = PDFParser()
             pages = parser.extract_pages(pdf)
-            with fitz.open(pdf) as doc:
-                text = parser._rapid_ocr(doc[0])
+            class StubOCR:
+                def recognize_image(self, path):
+                    assert Path(path).is_file()
+                    return "Synthetic scanned textbook page with enough text for verification."
+            scanned = parser.extract_pages(pdf, StubOCR(), force_ocr=True)
             report.update(pages=len(pages), method=pages[0]["extraction_method"],
-                          error=pages[0]["error_message"], characters=len(pages[0]["text"]), ocr_characters=len(text),
-                          unicode_path=True)
-            if report["method"] != "docling" or report["error"] or report["characters"] < 30 or len(text) < 30:
-                raise RuntimeError("本地解析或 OCR 实际检查失败")
+                          error=pages[0]["error_message"], characters=len(pages[0]["text"]),
+                          ocr_characters=len(scanned[0]["text"]), ocr_mode="mock-cloud", live_api=False,
+                          unicode_path=True, local_models=False)
+            if report["method"] != "text" or report["error"] or report["characters"] < 30 or scanned[0]["extraction_method"] != "qwen_ocr":
+                raise RuntimeError("文本提取或模拟云端 OCR 管线检查失败")
             report["ok"] = True
     except Exception as exc:
         report["failure"] = str(exc)

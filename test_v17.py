@@ -72,7 +72,7 @@ class StructuredAndParserTests(unittest.TestCase):
             {"page_number": 2, "text": "|列|值|\n|---|---|\n|甲|乙|", "extraction_method": "docling"},
         ])
         self.assertEqual({item["page_number"] for item in chunks}, {1, 2})
-        self.assertTrue(all(item["metadata"]["parserVersion"] == "2.117.0" for item in chunks))
+        self.assertTrue(all(item["metadata"]["parserVersion"] == "cloud-text-v1" for item in chunks))
         self.assertIn("table", {item["metadata"]["blockType"] for item in chunks})
 
     def test_metadata_json_migration_and_roundtrip(self):

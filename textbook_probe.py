@@ -1,4 +1,4 @@
-"""Local, cancellable textbook metadata and printed-page inspection. No cloud calls."""
+"""Cancellable textbook metadata and printed-page inspection. Cloud OCR for scanned margins."""
 from __future__ import annotations
 
 import hashlib
@@ -137,22 +137,13 @@ def build_calibration(observations, page_count):
 
 
 class TextbookInspector:
-    def __init__(self):
-        self._ocr = None
-
-    def _engine(self):
-        if self._ocr is None:
-            from pdf_parser import PDFParser
-            from rapidocr import RapidOCR
-            paths = PDFParser()._rapid_model_paths()
-            if len(paths) != 3:
-                raise ValueError("缺少随包本地 OCR 模型；不会联网下载")
-            self._ocr = RapidOCR(params={f"{prefix}.model_path": paths[key] for prefix, key in
-                (("Det", "det_model_path"), ("Cls", "cls_model_path"), ("Rec", "rec_model_path"))})
-        return self._ocr
+    def __init__(self, ocr_client=None):
+        self._ocr = ocr_client
 
     def _ocr_text(self, page, margins=False):
-        import numpy as np
+        from pdf_parser import PDFParser
+        if self._ocr is None:
+            raise ValueError("未配置云端 OCR")
         rects = [page.rect]
         if margins:
             r = page.rect
@@ -160,17 +151,12 @@ class TextbookInspector:
                      fitz.Rect(r.x0, r.y1-r.height*.12, r.x1, r.y1)]
         lines = []
         for rect in rects:
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rect, alpha=False, colorspace=fitz.csRGB)
-            pixels = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
-            output = self._engine()(pixels)
-            texts, scores = getattr(output, "txts", None), getattr(output, "scores", None)
-            if hasattr(output, "txts"):
-                lines.extend(str(t) for i, t in enumerate(texts if texts is not None else [])
-                             if scores is None or float(scores[i]) >= .85)
-            else:
-                rows, _ = output
-                lines.extend(str(row[1]) for row in (rows or []) if float(row[2]) >= .85)
-        return "\n".join(lines)
+            path = PDFParser._render_page(page, clip=rect)
+            try:
+                lines.append(self._ocr.recognize_image(path, plain_text=True))
+            finally:
+                Path(path).unlink(missing_ok=True)
+        return "\n".join(lines).strip()
 
     def inspect(self, path, progress=lambda stage, current, total: None):
         source = Path(path).resolve()
@@ -197,16 +183,16 @@ class TextbookInspector:
                 except Exception:
                     warnings.append(f"PDF 第 {i+1} 页无法读取，请核对")
             metadata = infer_metadata(source.name, (doc.metadata or {}).get("title", ""), "\n".join(front))
-            # Bounded local OCR: adjacent triples distributed through scanned pages.
+            # Bounded cloud OCR: adjacent triples distributed through scanned pages.
             # No unobserved long gap is assigned a guessed page offset.
             sampled = scan_pages
             if len(sampled) > 60:
                 picks = {round(j*(len(sampled)-3)/19)+k for j in range(20) for k in range(3)}
                 sampled = [scan_pages[i] for i in sorted(picks)]
-                warnings.append("扫描页较多，本次本地 OCR 抽样最多 60 页；未确认区间请手动校准")
+                warnings.append("扫描页较多，本次云端 OCR 抽样最多 60 页；未确认区间请手动校准")
             ocr_failed = False
             for j, i in enumerate(sampled):
-                progress("本地 OCR 校准", j+1, len(sampled))
+                progress("云端 OCR 校准", j+1, len(sampled))
                 try:
                     full = i < 3 and (not metadata["subject"] or not metadata["version"])
                     text = self._ocr_text(doc[i], margins=not full)
@@ -216,12 +202,12 @@ class TextbookInspector:
                     for line in text.splitlines():
                         match = NUMBER.fullmatch(unicodedata.normalize("NFKC", line))
                         if match and int(match[1]) > 0:
-                            observations.append({"pdf_page": i+1, "printed_page": int(match[1]), "method": "local_ocr"})
+                            observations.append({"pdf_page": i+1, "printed_page": int(match[1]), "method": "cloud_ocr"})
                 except Exception:
                     ocr_failed = True
                     break  # A missing/broken engine should not be retried for every page.
             if ocr_failed:
-                warnings.append("本地 OCR 未完成；保留文本识别结果，不调用云端服务")
+                warnings.append("云端 OCR 未完成或未配置；保留已识别文字，请手动核对页码")
             metadata = infer_metadata(source.name, (doc.metadata or {}).get("title", ""), "\n".join(front))
         if file_identity(source) != identity:
             raise ValueError("PDF 已变化，请重新识别")

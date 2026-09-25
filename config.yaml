@@ -21,15 +21,12 @@ dashscope:
   api_key: "${DASHSCOPE_API_KEY}"
   base_url: "https://dashscope.aliyuncs.com/api/v1"
   model: "text-embedding-v4"
-  ocr_model: "qwen-vl-ocr"
+  ocr_model: "qwen3.5-ocr"
   dimension: 1024
   batch_size: 10
 
-docling:
-  version: "2.117.0"
-  model_dir: "models/docling"
-  model_manifest: "models/MODEL-MANIFEST.json"
-  page_batch_size: 8
+parser:
+  mode: "cloud-text"
 
 retrieval:
   bm25_top_k: 20

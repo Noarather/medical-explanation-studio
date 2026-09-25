@@ -37,7 +37,7 @@ def decode_embedding(value: Optional[bytes], dimension: int) -> Optional[list[fl
 class IndexBuildStage:
     """Disk-backed, disposable storage for one complete file index build."""
 
-    OCR_METHODS = {"ocr", "rapidocr_fallback", "qwen_ocr_fallback"}
+    OCR_METHODS = {"ocr", "rapidocr_fallback", "qwen_ocr_fallback", "qwen_ocr"}
 
     def __init__(self, directory: str | Path, *, resume_key: str | None = None):
         self.persistent = resume_key is not None
@@ -114,7 +114,7 @@ class IndexBuildStage:
         connection = self._connection()
         page = connection.execute(
             "SELECT COUNT(*), MIN(page_number), MAX(page_number), "
-            "SUM(extraction_method IN ('ocr','rapidocr_fallback','qwen_ocr_fallback')) FROM pages"
+            "SUM(extraction_method IN ('ocr','rapidocr_fallback','qwen_ocr_fallback','qwen_ocr')) FROM pages"
         ).fetchone()
         page_count = int(page[0])
         if not page_count or int(page[1]) != 1 or int(page[2]) != page_count:
@@ -1184,7 +1184,15 @@ class DatabaseManager:
                 adopted += 1
         return adopted
 
-    def compatible_library_files(self, subject: str, fingerprint: str) -> list[dict]:
+    def compatible_library_files(self, subject: str, fingerprint: str | dict) -> list[dict]:
+        if isinstance(fingerprint, dict):
+            from index_profile import retrieval_compatible
+            rows = self.conn.execute(
+                "SELECT f.*, l.name AS library_name, l.subject FROM textbook_files f "
+                "JOIN libraries l ON l.id=f.library_id WHERE l.active=1 AND l.subject=? "
+                "AND f.status IN ('ready','warning') ORDER BY l.name", (subject,)
+            ).fetchall()
+            return [dict(row) for row in rows if retrieval_compatible(dict(row), fingerprint)]
         rows = self.conn.execute(
             """SELECT f.*, l.name AS library_name, l.subject FROM textbook_files f
                JOIN libraries l ON l.id=f.library_id

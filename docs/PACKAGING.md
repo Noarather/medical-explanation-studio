@@ -3,8 +3,8 @@
 ## 构建要求
 
 - Python 3.13、Node.js / npm、Inno Setup 6。
-- 完整运行依赖与离线模型。首次准备模型需要联网和足够磁盘空间。
-- 保持 PyInstaller onedir 和 Inno `DiskSpanning=yes`：轻量安装 EXE 与全部外置 BIN 必须同目录交付，不删模型以缩小包体积。
+- 完整运行依赖；2.2.0 起不再包含本地 AI 解析模型或推理运行时。
+- 保持 PyInstaller onedir 和 Inno `DiskSpanning=yes`：轻量安装 EXE 与全部外置 BIN 必须同目录交付。
 
 ```powershell
 .\build_windows.ps1 -SkipLocalInstall
@@ -18,9 +18,9 @@
 
 ## 公开发布检查
 
-### 2.1.3 验收补充
+### 2.2.0 验收补充
 
-- 使用中文目录、中文文件名与全角括号的合成 PDF 验证主解析无降级和本地 OCR。
+- 使用中文目录、中文文件名与全角括号的合成 PDF 验证文字层解析和模拟云端 OCR，报告明确 `live_api=false`。验证不包含本地 AI 权重或 Docling/Torch 等运行时；不得将模拟结果作为真实模型质量证明。
 - 执行 `--ui-scroll-smoke-report`，验证多教材分页滚动、跨页编辑及索引任务完成后的自动刷新；正式安装目录也必须通过同样验收。
 - 覆盖解析中断、向量请求失败、向量缺项、发布回滚及断点重试。内存超限时桌面工作进程返回 75、重新排队；同一断点再次超限须失败退出。
 - `medexplain-index-*.sqlite3` 暂存文件位于业务数据库旁，包含用户教材片段与向量，不得公开发布。失败保留断点，完整发布后清除对应暂存文件。

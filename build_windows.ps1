@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location $PSScriptRoot
 
-$Version = "2.1.3"
+$Version = "2.2.0"
 $BuildVenv = Join-Path $PSScriptRoot ".venv-build"
 $BuildPython = Join-Path $BuildVenv "Scripts\python.exe"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -42,11 +42,9 @@ if ($BuildRuntime.Trim() -ne "3.13") { throw "Python 3.13 is required for releas
 Write-Host "[2/9] Install pinned dependencies"
 if (-not $ReuseDependencies) {
     Invoke-Python @("-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt") "Install requirements"
-    Invoke-Python @("tools\prefetch_docling_models.py") "Prefetch Docling and RapidOCR models"
 }
 Invoke-Python @("-m", "pip", "check") "Dependency consistency"
 Invoke-Python @("-m", "pip", "freeze", "--all") "Capture dependencies" | Set-Content -LiteralPath "$ReleaseDir\DEPENDENCIES.txt"
-$ModelManifest = Get-Content -LiteralPath "models\MODEL-MANIFEST.json" -Raw | ConvertFrom-Json
 $QtVersion = & $BuildPython -c "from PySide6.QtCore import qVersion; print(qVersion())"
 Assert-ExitCode "Read Qt version"
 if ($QtVersion.Trim() -ne "6.9.2") { throw "Expected PySide6/Qt 6.9.2, got $QtVersion" }
@@ -92,9 +90,9 @@ $checks = @{
     "PyMuPDF" = [bool]($allFiles | Where-Object { $_.Name -match '(_fitz|mupdf|pymupdf)' })
     "jieba dictionary" = [bool]($allFiles | Where-Object { $_.Name -eq "dict.txt" -and $_.FullName -match 'jieba' })
     "python-docx data" = [bool]($allDirs | Where-Object { $_.Name -eq "docx" })
-    "Docling models" = [bool]($allFiles | Where-Object { $_.FullName -match 'models\\docling' -and $_.Extension -in '.onnx','.pt','.safetensors','.bin' })
-    "Model manifest" = [bool]($allFiles | Where-Object { $_.Name -eq "MODEL-MANIFEST.json" })
 }
+if ($allDirs | Where-Object { $_.Name -in 'docling','torch','rapidocr','onnxruntime','transformers' }) { throw "Local AI runtime unexpectedly bundled" }
+if ($allFiles | Where-Object { $_.Extension -in '.onnx','.safetensors','.pt' }) { throw "Local AI weights unexpectedly bundled" }
 foreach ($entry in $checks.GetEnumerator()) {
     if (-not $entry.Value) { throw "Bundle audit failed: $($entry.Key)" }
     Write-Host "  OK  $($entry.Key)"

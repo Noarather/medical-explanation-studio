@@ -4,7 +4,14 @@
 
 自有源码采用 [AGPL-3.0-only](LICENSE)，第三方组件保留各自许可，详见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-这是一个独立的 Windows 桌面程序（当前版本 2.1.3，Vue 3 + Qt WebEngine）。它为用户添加的医学教材 PDF 建立检索库，为 JSON/Excel 题目生成带教材证据的解析，支持自动校验与异常人工复核，再导出标准 JSON/XLSX 或增量文件。程序不会连接或修改其他题库网站。
+这是一个独立的 Windows 桌面程序（当前版本 2.2.0，Vue 3 + Qt WebEngine）。它为用户添加的医学教材 PDF 建立检索库，为 JSON/Excel 题目生成带教材证据的解析，支持自动校验与异常人工复核，再导出标准 JSON/XLSX 或增量文件。程序不会连接或修改其他题库网站。
+
+## 2.2.0 更新
+
+- 默认 `qwen3.5-ocr` 云端 OCR，普通文字 PDF 使用轻量 PyMuPDF 提取；移除默认安装包中的 Docling、RapidOCR、本地 AI 运行时与模型权重。
+- 扫描页、复杂双栏和强制 OCR 按页调用云端，每页成功保存断点；拒绝空响应／截断，失败可重试。表格和公式输出需人工核对。
+- 扫描件信息识别及页码校准也走云端，有费用／数据发送提示；旧的同向量空间索引保留，不自动重建。
+- 详见 [更新日志](CHANGELOG.md) 与 [云端 OCR 说明及小样本验证边界](docs/CLOUD_OCR.md)。
 
 ## 2.1.3 更新
 
@@ -18,7 +25,7 @@
 
 - 单本 PDF 教材、学科与版本管理，按 SHA-256 增量更新。
 - 支持用“PDF 页 ↔ 课本印刷页”锚点校准页码；解析引用实际课本页，PDF 原页仍准确定位。
-- 离线 Docling 解析布局、表格、公式及中文 OCR；PyMuPDF／RapidOCR 故障回退，本地失败时才使用配置的 Qwen OCR。旧索引逐本确认重建，重建前备份。
+- 轻量文字层提取＋Qwen 云端 OCR，按物理页结构化切块；重建前备份，不覆盖失败前的历史审核证据。
 - SQLite FTS5 BM25 + embedding 候选检索，DashScope Rerank 排序；失败回退至 embedding，综合门槛须经过黄金集标定。
 - 支持 DeepSeek、Claude、Gemini 及自定义 API 生成解析、标签、考点和知识卡；设置页提供模型测试与版本／构建标识。
 - JSON/Excel 导入、字段映射、重复 ID 和必填字段校验。
@@ -45,11 +52,10 @@ cd frontend
 npm ci
 npm run build
 cd ..
-python tools/prefetch_docling_models.py
 python desktop_app.py
 ```
 
-需要 Python 3.13、Node.js / npm 和 Windows。模型准备需要联网并下载较大文件，完成后教材主解析和中文 OCR 可离线运行。使用云端向量、重排或生成服务需自行配置账户和密钥，并承担对应服务费用。
+桌面版需要 Python 3.13、Node.js / npm 和 Windows，不需要 GPU 或本地模型下载。扫描页 OCR、向量、重排和生成需要联网并自行配置账户／密钥，承担对应费用。Linux 无 GPU 环境可使用 Python CLI；本项目安装器为 Windows 版本。
 
 也可以右键使用 PowerShell 运行 `run_desktop.ps1`。启动后在“设置”页录入 DeepSeek 和 DashScope 密钥。密钥由 Windows 凭据管理器保存，不写入配置文件或数据库。
 
@@ -89,7 +95,7 @@ python main.py export --set-id "题目集ID" --output-dir ".\output"
 
 ## 测试与打包
 
-后续安装包固定采用 **轻量 EXE 启动器 + 同目录 BIN 数据包**，保留离线模型。交付与验收要求见 [Windows 打包与交付规范](docs/PACKAGING.md)。
+后续安装包固定采用 **轻量 EXE 启动器 + 同目录 BIN 数据包**，不包含本地 AI 模型。交付与验收要求见 [Windows 打包与交付规范](docs/PACKAGING.md)。
 
 ```powershell
 python tools/check_public_source.py
@@ -103,6 +109,6 @@ cd ..
 
 `build_windows.ps1` 运行 Python／前端测试和类型检查，将便携程序、分盘安装器、源码快照、模型清单及验收报告保存到独立的 `release/MedExplainStudio-<版本>-<时间戳>/`。示例使用 `-SkipLocalInstall`，只构建不安装；省略该参数会备份并原位升级本机程序，请谨慎使用。缺少独立网页项目时，相关跨项目测试会明确跳过。
 
-公开仓库不包含模型文件，未准备模型时部分 PDF 集成测试无法运行；请先执行模型准备命令。日常测试不调用真实云模型服务。参与开发和敏感信息报告方式见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [SECURITY.md](SECURITY.md)。
+日常测试无需本地 AI 模型或云密钥，不调用真实云服务。安装解析探针使用模拟云客户端，不代表真实 OCR 准确率。参与开发和敏感信息报告方式见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [SECURITY.md](SECURITY.md)。
 
-云端处理范围：教材候选文本发送至 DashScope 生成向量／重排；本地解析失败并使用云回退时页面图像发送至 Qwen OCR；题目和检索证据发送至所选模型服务。程序不发送遥测数据。
+云端处理范围：教材文本发送至 DashScope 生成向量／重排；扫描、复杂双栏、强制 OCR 及扫描件信息／页码识别的页面图片发送至 Qwen OCR；题目和检索证据发送至所选模型服务。程序不发送遥测数据。

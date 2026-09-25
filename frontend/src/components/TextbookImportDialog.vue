@@ -91,7 +91,7 @@ async function commit() {
       } else row.error = outcome.message
       affected += outcome.affected_questions ?? 0
     }
-    message.value = props.calibrating ? `校准已完成；${affected} 道历史题目需要复核页码引用。` : `成功导入 ${result.imported} 本；未自动建立索引或调用云端接口。`
+    message.value = props.calibrating ? `校准已完成；${affected} 道历史题目需要复核页码引用。` : `成功导入 ${result.imported} 本；未自动建立索引。扫描页识别可能已使用云端 OCR。`
     emit("saved")
   })
 }
@@ -105,7 +105,7 @@ function close() { if (!busy.value) emit("update:open", false) }
     class="flex h-[min(88vh,960px)] min-h-0 w-full max-w-[960px] flex-col overflow-hidden rounded-lg border border-border bg-background p-5 shadow-overlay">
     <header class="shrink-0" data-testid="textbook-header">
     <h2 class="text-base font-semibold">{{ calibrating ? '自动校准教材页码' : '批量导入教材' }}</h2>
-    <p class="mt-1 text-xs text-foreground-secondary">本地识别名称、学科、版次与印刷页码，可逐本修改后确认。不上传 PDF，不自动建立云端索引。</p>
+    <p class="mt-1 text-xs text-foreground-secondary">优先读取文字层；扫描页的封面／页眉页脚图片将发送至 DashScope 云端 OCR，可能产生费用（每本最多抽样 60 页）。可逐本核对，不自动建立索引。</p>
     <p v-if="calibrating" class="mt-2 rounded border border-warning/40 p-2 text-xs text-warning">确认应用后更新结构化证据页码；受影响的历史题目会回到待审核，解析文字不自动改写。手工统一偏移请使用教材的“编辑”。</p>
     <div class="my-3 flex flex-wrap items-center gap-3">
       <button v-if="!calibrating" :disabled="busy" class="rounded border border-border px-3 py-1.5 text-sm disabled:opacity-50" @click="pick">选择 PDF（支持多选）</button>

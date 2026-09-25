@@ -211,9 +211,8 @@ def test_local_ocr_scanned_page_fallback_and_empty_output(tmp_path, monkeypatch)
     monkeypatch.setattr(inspector, "_ocr_text", ocr)
     result = inspector.inspect(path)
     assert result["calibration"]["mapping"] == {"1":1,"2":2,"3":3}
-    assert all(calls) and all(a["method"] == "local_ocr" for a in result["calibration"]["anchors"])
-    empty = TextbookInspector()
-    monkeypatch.setattr(empty, "_engine", lambda: lambda _: SimpleNamespace(txts=None, scores=None))
+    assert all(calls) and all(a["method"] == "cloud_ocr" for a in result["calibration"]["anchors"])
+    empty = TextbookInspector(ocr_client=SimpleNamespace(recognize_image=lambda *a, **kw: ""))
     with fitz.open(path) as doc:
         assert empty._ocr_text(doc[0], margins=True) == ""
 

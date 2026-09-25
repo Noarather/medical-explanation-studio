@@ -115,6 +115,7 @@ function onRemove(row: LibraryRow) {
 
 <template>
   <div>
+    <p class="mb-3 rounded-md border border-border p-3 text-sm text-foreground-secondary">云端解析模式：扫描页、扫描书信息识别和页码校准会将页面图片发送至 DashScope，产生 API 费用；不再使用本地 AI 模型。已有兼容索引保留。</p>
     <p v-if="health" class="mb-3 rounded-md border border-border p-3 text-sm" :class="health.ok ? 'text-success' : 'text-destructive'">{{ health.message }}</p>
     <div class="mb-6 flex items-center gap-3">
       <h1 class="text-xl font-semibold">教材库</h1>
@@ -161,7 +162,7 @@ function onRemove(row: LibraryRow) {
         </div>
         <div class="mt-1 text-sm text-foreground-secondary">
           <template v-if="row.file_count">
-            {{ row.page_count ?? 0 }} 页 · 备用 OCR {{ row.ocr_page_count ?? 0 }} 页 · {{ row.file_name }}
+            {{ row.page_count ?? 0 }} 页 · OCR {{ row.ocr_page_count ?? 0 }} 页 · {{ row.file_name }}
           </template>
           <template v-else-if="scanJob(row)">索引处理中，完成后自动刷新</template>
           <template v-else>尚未建立索引（导入／页码校准不等于索引）</template>
@@ -205,7 +206,7 @@ function onRemove(row: LibraryRow) {
     >
       <h2 class="mb-2 text-base font-semibold">云端处理说明</h2>
       <p class="text-sm">
-        教材文本将发送至 DashScope 生成向量；本地解析失败的页面可能发送至 Qwen OCR。题目与教材证据会发送至设置中选中的模型服务。是否继续？
+        教材文本将发送至 DashScope 生成向量；扫描页或强制 OCR 的页面图片将发送至 Qwen 云端 OCR，可能产生费用。题目与教材证据会发送至设置中选中的模型服务。是否继续？
       </p>
       <div class="mt-4 flex justify-end gap-2">
         <button class="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted" @click="cloudNoticeRow = null">取消</button>

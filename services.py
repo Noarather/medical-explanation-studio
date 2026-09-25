@@ -34,7 +34,7 @@ from generation_executor import (
 from llm_client import select_best_evidence
 from question_format_v2 import make_envelope, normalize_question_v2, normalize_tags, write_xlsx_v2
 from app_paths import backup_dir
-from index_profile import build_index_profile, index_fingerprint
+from index_profile import build_index_profile, index_fingerprint, retrieval_compatible
 from reranker_client import DashScopeReranker
 from retrieval_quality import hybrid_score
 
@@ -263,14 +263,7 @@ class TextbookService:
         self.embedding_client = embedding_client
         self.ocr_client = ocr_client
         retrieval = config["retrieval"]
-        docling = config.get("docling", {})
-        model_dir = docling.get("model_dir")
-        if model_dir and not Path(str(model_dir)).is_absolute():
-            model_dir = Path(__file__).resolve().parent / str(model_dir)
-        self.parser = PDFParser(
-            retrieval["chunk_size"], retrieval["chunk_overlap"], model_dir,
-            docling.get("page_batch_size", 8),
-        )
+        self.parser = PDFParser(retrieval["chunk_size"], retrieval["chunk_overlap"])
         self.memory = MemoryGuard(config["memory_guard"]["max_memory_mb"])
         self.parser.memory_guard = self.memory
 
@@ -310,7 +303,7 @@ class TextbookService:
             existing
             and existing["status"] == "ready"
             and self.database.file_chunk_count(existing["id"]) > 0
-            and existing.get("index_fingerprint") == fingerprint
+            and retrieval_compatible(existing, profile)
         )
         if (
             not force_ocr and is_complete
@@ -342,7 +335,7 @@ class TextbookService:
             return {"files": 1, "changed": 0, "skipped": 1, "message": message}
 
         from parser_health import parser_health
-        health = parser_health(self.parser.model_dir)
+        health = parser_health()
         if health["missing"]:
             raise RuntimeError(health["message"])
         if existing and self.database.file_chunk_count(int(existing["id"])):
@@ -368,7 +361,7 @@ class TextbookService:
                 if not parsed:
                     batches = self.parser.iter_page_batches(
                         path, self.ocr_client, force_ocr,
-                        (lambda current, total: control.progress(current, total, f"Docling 解析 {path.name}：{current}/{total} 页（已保存断点）")) if control else None,
+                        (lambda current, total: control.progress(current, total, f"文本／云端 OCR 解析 {path.name}：{current}/{total} 页（已保存断点）")) if control else None,
                         start_page=saved_pages + 1,
                     )
                     try:
@@ -854,11 +847,11 @@ class GenerationService:
         )
         libraries = self.database.list_libraries()
         usable_libraries = self._usable_libraries(libraries, selected_library_ids)
-        if "docling" in self.config:
-            current_fingerprint = index_fingerprint(build_index_profile(self.config))
+        if "docling" in self.config or "parser" in self.config:
+            current_profile = build_index_profile(self.config)
             usable_libraries = [
                 item for item in usable_libraries
-                if str(item.get("index_fingerprint") or "") == current_fingerprint
+                if retrieval_compatible(item, current_profile)
             ]
         retrieval_cache: dict[tuple[str, str], dict] = {}
         counted_reranks: set[str] = set()
@@ -1705,7 +1698,7 @@ class V2UpgradeService:
 
     def run(self,set_id:str,control:Optional[JobControl]=None)->dict:
         rows=self.database.v2_upgrade_questions(set_id);stamp=datetime.now().strftime("%Y%m%d-%H%M%S");backup=self.database.backup_database(backup_dir()/f"before-v2-upgrade-{stamp}.db")
-        fingerprint=index_fingerprint(build_index_profile(self.config));threshold=float(self.config["retrieval"]["similarity_threshold"])
+        fingerprint=build_index_profile(self.config);threshold=float(self.config["retrieval"]["similarity_threshold"])
         stats={"updated":0,"textbook":0,"restructured":0,"skipped":0,"failed":0,"backup":backup}
         for index,row in enumerate(rows,1):
             if control:control.checkpoint();control.progress(index-1,len(rows),f"升级 {row['external_id']} · 已完成 {stats['updated']}")

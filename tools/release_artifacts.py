@@ -123,9 +123,12 @@ def main():
             report = json.loads((release / "checks" / name).read_text(encoding="utf-8"))
             if not report.get("ok"):
                 raise ValueError(f"Packaged check failed: {name}")
+            if name == "parser.json" and not report.get("unicode_path"):
+                raise ValueError("Packaged Unicode PDF path check missing")
+            if name in {"ui.json", "ui-scroll.json"} and not report.get("indexRefresh", {}).get("completedReloaded"):
+                raise ValueError("Packaged index status refresh check missing")
         app = release / "portable/MedExplainStudio"
-        models = json.loads((args.root / "models/MODEL-MANIFEST.json").read_text(encoding="utf-8"))
-        verify(app / "_internal", {item["path"]: item["sha256"] for item in models["files"]})
+        models = {"files": [], "mode": "cloud-text", "bundledModels": False}
         manifest = {p.relative_to(app).as_posix(): sha256(p) for p in app.rglob("*") if p.is_file()}
         write_json(release / "APP-MANIFEST.json", manifest)
         artifacts = [{"name": p.name, "bytes": p.stat().st_size, "sha256": sha256(p)}
@@ -136,7 +139,7 @@ def main():
         write_json(release / "BUILD.json", {**info, "tests": tests, "artifacts": artifacts,
             "signed": args.signed, "liveProviderApiTested": False, "localInstallStatus": "pending",
             "applicationSourceUnchangedDuringBuild": True, "sourceFileCount": len(source_files(args.root)),
-            "modelManifest": "models/MODEL-MANIFEST.json"})
+            "modelManifest": "MODEL-MANIFEST.json"})
         write_json(release / "MODEL-MANIFEST.json", models)
         with (release / "installer/SHA256.txt").open("x", encoding="ascii") as handle:
             handle.write("".join(f"{item['sha256']}  {item['name']}\n" for item in artifacts))

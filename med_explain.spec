@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 import os
 
 hidden = []
-for package in ("keyring.backends", "dashscope", "openpyxl", "docx", "jieba", "docling", "instructor", "pydantic", "rapidocr", "onnxruntime"):
+for package in ("keyring.backends", "dashscope", "openpyxl", "docx", "jieba", "instructor", "pydantic"):
     hidden += collect_submodules(package)
 
 datas = [("config.yaml", ".")]
@@ -11,12 +11,6 @@ if os.environ.get("MEDEXPLAIN_BUILD_INFO"):
     datas += [(os.environ["MEDEXPLAIN_BUILD_INFO"], ".")]
 datas += collect_data_files("jieba")
 datas += collect_data_files("keyring")
-datas += collect_data_files("docling")
-datas += collect_data_files("docling_parse")
-datas += copy_metadata("docling")
-datas += copy_metadata("docling-slim")
-datas += collect_data_files("rapidocr")
-datas += [("models", "models")]
 datas += [("frontend/dist", "frontend/dist")]
 
 hidden += [
@@ -34,7 +28,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter"],
+    excludes=["tkinter", "docling", "docling_core", "docling_parse", "rapidocr", "onnxruntime", "torch", "torchvision", "transformers"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
