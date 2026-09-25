@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { inject, onMounted, ref } from "vue"
+import { inject, onMounted, ref, watch } from "vue"
 import { PhBookOpen, PhPlus, PhTrash } from "@phosphor-icons/vue"
 import { invoke, type BridgeError } from "../lib/bridge"
 import { useJobsStore } from "../stores/jobs"
 import { useLibrariesStore } from "../stores/libraries"
 import type { LibraryRow } from "../stores/libraries"
 import LibraryDialog from "../components/LibraryDialog.vue"
+import TextbookImportDialog from "../components/TextbookImportDialog.vue"
 
 const store = useLibrariesStore()
 const jobs = useJobsStore()
@@ -17,7 +18,15 @@ onMounted(() => {
   jobs.init().catch((error) => toast((error as BridgeError).message ?? String(error), "destructive"))
 })
 
+// Job snapshots arrive continuously; reload only when a scan changes state,
+// not on every progress tick. The watcher is disposed when the page unmounts.
+watch(() => jobs.jobs.filter(job => job.job_type === "scan")
+  .map(job => `${job.id}:${job.status}`).sort().join("|"), () => run(() => store.load()))
+
 const cloudNoticeRow = ref<LibraryRow | null>(null)
+const batchOpen = ref(false)
+const calibrating = ref<LibraryRow | null>(null)
+function openBatch(row: LibraryRow | null = null) { calibrating.value = row; batchOpen.value = true }
 const health = ref<{ ok: boolean; message: string } | null>(null)
 const checkingHealth = ref(false)
 async function checkHealth() {
@@ -28,12 +37,13 @@ async function checkHealth() {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  ready: "可用", warning: "部分页面异常", indexing: "未完成",
+  ready: "可用", warning: "已建立（有解析降级／异常）", indexing: "未完成",
   error: "失败", missing: "文件丢失",
 }
 const INDEX_LABELS: Record<string, string> = {
   none: "未建立索引", unknown: "索引未就绪", compatible: "索引可用", stale: "需重建", partial: "索引有异常", error: "索引失败",
 }
+const SCAN_LABELS: Record<string, string> = { queued: "等待索引", running: "建立索引中", paused: "索引已暂停" }
 
 function run(action: () => unknown) {
   try {
@@ -47,6 +57,8 @@ function run(action: () => unknown) {
 }
 
 function calibration(row: LibraryRow): string {
+  if (row.calibration?.status) return row.calibration.status === "recognized"
+    ? `自动分段校准 · ${row.calibration.mapped_pages} 页已映射` : "印刷页码待校准"
   return row.page_offset ? `课本页 = PDF页 - ${row.page_offset}` : "页码一致"
 }
 
@@ -54,7 +66,7 @@ function scanJob(row: LibraryRow) {
   return jobs.jobs.find((job) => {
     if (job.job_type !== "scan" || !["queued", "running", "paused"].includes(job.status)) return false
     try {
-      return JSON.parse((job as unknown as { payload_json?: string }).payload_json ?? "{}").library_id === row.id
+      return JSON.parse(job.payload_json ?? "{}").library_id === row.id
     } catch {
       return false
     }
@@ -99,16 +111,6 @@ function onRemove(row: LibraryRow) {
   })
 }
 
-function onInfer(row: LibraryRow) {
-  run(async () => {
-    const offset = await store.inferOffset(row)
-    if (offset === null) {
-      toast("索引文本中没有找到足够一致的课本页码。可点击“编辑”手动填写一个对应页。", "destructive")
-    } else {
-      toast(`已识别页码差值：PDF 页 - ${offset} = 课本页。已有证据中的页码也已同步校正。`, "success")
-    }
-  })
-}
 </script>
 
 <template>
@@ -117,10 +119,15 @@ function onInfer(row: LibraryRow) {
     <div class="mb-6 flex items-center gap-3">
       <h1 class="text-xl font-semibold">教材库</h1>
       <span class="flex-1" />
+      <button class="rounded-md border border-border px-3 py-1.5 text-sm disabled:opacity-50" :disabled="store.loading" @click="run(() => store.load())">刷新状态</button>
       <button class="rounded-md border border-border px-3 py-1.5 text-sm" :disabled="checkingHealth" @click="checkHealth">{{ checkingHealth ? '检查中…' : '检查解析环境' }}</button>
       <label class="flex items-center gap-1 text-sm text-foreground-secondary">
         <input type="checkbox" v-model="store.forceOcr" /> 强制重新 OCR 全部页面
       </label>
+      <button
+        class="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+        @click="openBatch()"
+      >批量导入教材</button>
       <button
         class="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm text-onprimary hover:bg-primary-hover"
         @click="store.openAdd()"
@@ -128,12 +135,13 @@ function onInfer(row: LibraryRow) {
     </div>
 
     <div v-if="!store.libraries.length" class="rounded-lg border border-border bg-background p-10 text-center text-sm text-foreground-secondary shadow-card">
-      {{ store.loading ? "加载中…" : "还没有教材。点击右上角“添加教材”导入一本 PDF。" }}
+      {{ store.loading ? "加载中…" : "还没有教材。点击“批量导入教材”选择 PDF 并自动识别信息，也可手动添加。" }}
     </div>
 
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
       <div
         v-for="row in store.libraries" :key="row.id"
+        :data-library-id="row.id"
         class="rounded-lg border border-border bg-background p-4 shadow-card"
       >
         <div class="mb-1 flex items-start justify-between gap-2">
@@ -146,7 +154,7 @@ function onInfer(row: LibraryRow) {
             :class="['stale', 'partial', 'error'].includes(row.index_state) ? 'bg-warning/10 text-warning'
               : row.index_state === 'compatible' ? 'bg-success/10 text-success'
               : 'bg-muted text-foreground-secondary'"
-          >{{ INDEX_LABELS[row.index_state] ?? row.index_state }}</span>
+          >{{ scanJob(row) ? SCAN_LABELS[scanJob(row)!.status] : INDEX_LABELS[row.index_state] ?? row.index_state }}</span>
         </div>
         <div class="text-sm text-foreground-secondary">
           {{ row.subject }} · {{ row.version || "未填写版本" }}
@@ -155,10 +163,11 @@ function onInfer(row: LibraryRow) {
           <template v-if="row.file_count">
             {{ row.page_count ?? 0 }} 页 · 备用 OCR {{ row.ocr_page_count ?? 0 }} 页 · {{ row.file_name }}
           </template>
-          <template v-else>尚未建立索引</template>
+          <template v-else-if="scanJob(row)">索引处理中，完成后自动刷新</template>
+          <template v-else>尚未建立索引（导入／页码校准不等于索引）</template>
         </div>
         <div class="mt-1 text-sm">
-          <span>{{ STATUS_LABELS[row.file_status ?? ""] ?? "未建立" }}</span>
+          <span>{{ scanJob(row) ? SCAN_LABELS[scanJob(row)!.status] : STATUS_LABELS[row.file_status ?? ""] ?? "未建立" }}</span>
           <span class="text-foreground-secondary"> · {{ calibration(row) }}</span>
         </div>
         <div v-if="row.file_error" class="mt-1 rounded-md bg-destructive/5 p-2 text-xs text-destructive">
@@ -169,14 +178,14 @@ function onInfer(row: LibraryRow) {
           <div class="h-1.5 overflow-hidden rounded bg-muted">
             <div class="h-full bg-primary transition-all duration-base" :style="{ width: `${scanPercent(row)}%` }" />
           </div>
-          <div class="mt-0.5 text-xs text-foreground-secondary">索引 {{ scanPercent(row) }}%</div>
+          <div class="mt-0.5 text-xs text-foreground-secondary">{{ SCAN_LABELS[scanJob(row)!.status] }} · {{ scanPercent(row) }}% · {{ scanJob(row)!.message }}</div>
         </div>
         <div class="mt-3 flex flex-wrap gap-2 text-sm">
           <button
             class="rounded-md bg-primary px-2.5 py-1 text-onprimary hover:bg-primary-hover disabled:opacity-50"
             :disabled="!!scanJob(row)" @click="onScan(row)"
           >{{ ['partial', 'error'].includes(row.index_state) ? '重试异常索引' : row.file_count ? '建立 / 更新索引' : '建立索引' }}</button>
-          <button class="rounded-md border border-border px-2.5 py-1 hover:bg-muted" @click="onInfer(row)">识别实际页码</button>
+          <button class="rounded-md border border-border px-2.5 py-1 hover:bg-muted disabled:opacity-50" :disabled="!!scanJob(row)" @click="openBatch(row)">自动校准页码</button>
           <button class="rounded-md border border-border px-2.5 py-1 hover:bg-muted" @click="store.openEdit(row)">编辑</button>
           <button
             class="flex items-center gap-1 rounded-md border border-destructive/50 px-2.5 py-1 text-destructive hover:bg-destructive/5"
@@ -187,6 +196,7 @@ function onInfer(row: LibraryRow) {
     </div>
 
     <LibraryDialog v-model:open="store.dialogOpen" :editing="store.editing" />
+    <TextbookImportDialog v-model:open="batchOpen" :calibrating="calibrating" @saved="run(() => store.load())" />
 
     <div v-if="cloudNoticeRow" class="fixed inset-0 z-40 bg-foreground/20" @click="cloudNoticeRow = null" />
     <div

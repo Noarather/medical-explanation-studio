@@ -7,6 +7,7 @@ export interface LibraryRow {
   ocr_page_count: number | null; file_status: string | null; file_error: string | null
   file_name: string | null; index_fingerprint: string | null; index_state: string
   file_error_summary?: string
+  calibration?: { status?: string; mapped_pages?: number; unknown_pages?: number; segments?: unknown[] }
 }
 
 export interface LibraryForm {
@@ -19,20 +20,24 @@ export const useLibrariesStore = defineStore("libraries", {
     libraries: [] as LibraryRow[],
     currentFingerprint: "",
     loading: false,
+    loadRequest: 0,
     forceOcr: false,
     dialogOpen: false,
     editing: null as LibraryRow | null,
   }),
   actions: {
     async load() {
+      const request = ++this.loadRequest
       this.loading = true
       try {
         const response = await invoke<{ libraries: LibraryRow[]; current_fingerprint: string }>(
           "library", "list")
-        this.libraries = response.libraries
-        this.currentFingerprint = response.current_fingerprint
+        if (request === this.loadRequest) {
+          this.libraries = response.libraries
+          this.currentFingerprint = response.current_fingerprint
+        }
       } finally {
-        this.loading = false
+        if (request === this.loadRequest) this.loading = false
       }
     },
     openAdd() {

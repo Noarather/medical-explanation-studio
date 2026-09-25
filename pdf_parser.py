@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import fitz
+
+from memory_guard import MemoryGuard, MemoryLimitExceeded, MemorySnapshot, MemoryState
 
 
 DOCLING_VERSION = "2.117.0"
@@ -26,6 +29,7 @@ class PDFParser:
     def __init__(
         self, chunk_size: int = 500, chunk_overlap: int = 50,
         model_dir: str | Path | None = None, page_batch_size: int = 8,
+        memory_guard: MemoryGuard | None = None,
     ):
         if chunk_size <= 0 or chunk_overlap < 0 or chunk_overlap >= chunk_size:
             raise ValueError("chunk_size must be positive and overlap must be smaller")
@@ -38,6 +42,7 @@ class PDFParser:
         self.model_dir = Path(model_dir or environment_model_dir or default_models)
         self._converter = None
         self._rapidocr = None
+        self.memory_guard = memory_guard
 
     def _rapid_model_paths(self) -> dict[str, str]:
         root = self.model_dir
@@ -149,8 +154,69 @@ class PDFParser:
                 })
         return blocks
 
+    def release_resources(self) -> None:
+        self._converter = None
+        self._rapidocr = None
+        gc.collect()
+
+    @staticmethod
+    def _is_memory_failure(exc: BaseException) -> bool:
+        if isinstance(exc, (MemoryLimitExceeded, MemoryError)):
+            return True
+        message = str(exc).casefold()
+        signatures = (
+            "out of memory", "not enough memory", "cannot allocate memory",
+            "failed to allocate", "allocation failed", "bad allocation",
+            "std::bad_alloc", "memory limit",
+        )
+        return any(signature in message for signature in signatures)
+
+    def _memory_snapshot(self, label: str) -> MemorySnapshot | None:
+        return self.memory_guard.sample(label) if self.memory_guard is not None else None
+
+    def _recover_memory(
+        self, path: Path, page_range: tuple[int, int], batch_size: int,
+        *, raise_on_hard: bool = True,
+    ) -> MemorySnapshot | None:
+        if self.memory_guard is None:
+            self.release_resources()
+            return None
+        return self.memory_guard.recover(
+            "pdf_parse", self.release_resources, stage="docling_parse",
+            file_path=str(path), page_range=page_range, batch_size=batch_size,
+            raise_on_hard=raise_on_hard,
+        )
+
+    def _memory_exception(
+        self, path: Path, page_range: tuple[int, int], batch_size: int,
+    ) -> MemoryLimitExceeded:
+        snapshot = self._memory_snapshot("pdf_parse")
+        if snapshot is None:
+            snapshot = MemorySnapshot(
+                current_mb=0.0, soft_limit_mb=0.0, hard_limit_mb=0.0,
+                state=MemoryState.HARD, label="pdf_parse",
+            )
+        return MemoryLimitExceeded(
+            snapshot, stage="docling_parse", file_path=str(path),
+            page_range=page_range, batch_size=batch_size,
+        )
+
     def _docling_batch(self, path: Path, start_page: int, end_page: int) -> list[dict]:
-        result = self._docling_converter().convert(path, page_range=(start_page, end_page))
+        converter = self._docling_converter()
+        if not str(path).isascii():
+            # The native Windows Docling Parse filename loader cannot open some
+            # Unicode paths. Reopen the original file for each bounded range and
+            # give Docling an ASCII logical name without rewriting the user's PDF.
+            from docling.datamodel.base_models import DocumentStream
+            # DocumentStream validates BytesIO, not ordinary file handles.
+            from io import BytesIO
+            with path.open("rb") as source, BytesIO(source.read()) as stream:
+                result = converter.convert(
+                    DocumentStream(name="document.pdf", stream=stream),
+                    page_range=(start_page, end_page),
+                )
+        else:
+            result = converter.convert(path, page_range=(start_page, end_page))
         document = result.document
         pages = []
         for page_number in range(start_page, end_page + 1):
@@ -238,33 +304,98 @@ class PDFParser:
             for item in self.chunks_from_pages(self.extract_pages(path))
         ]
 
+    def iter_page_batches(
+        self, path: str | Path, ocr_client=None, force_ocr: bool = False,
+        progress: Optional[Callable[[int, int], None]] = None,
+        *, start_page: int = 1,
+    ) -> Iterator[list[dict]]:
+        pdf_path = Path(path)
+        batch_size = self.page_batch_size
+        memory_retries = 0
+        try:
+            with fitz.open(pdf_path) as document:
+                total = len(document)
+                start = max(1, int(start_page))
+                while start <= total:
+                    attempt_size = min(batch_size, total - start + 1)
+                    end = start + attempt_size - 1
+                    snapshot = self._memory_snapshot("pdf_parse")
+                    if snapshot is not None and snapshot.state is not MemoryState.NORMAL:
+                        recovered = self._recover_memory(
+                            pdf_path, (start, end), attempt_size, raise_on_hard=False,
+                        )
+                        if attempt_size > 1:
+                            batch_size = max(1, attempt_size // 2)
+                            memory_retries = 0
+                            continue
+                        if recovered is not None and recovered.state is MemoryState.HARD:
+                            raise MemoryLimitExceeded(
+                                recovered, stage="docling_parse", file_path=str(pdf_path),
+                                page_range=(start, end), batch_size=attempt_size,
+                            )
+
+                    try:
+                        batch = self._docling_batch(pdf_path, start, end)
+                        if force_ocr and not any(item.get("text") for item in batch):
+                            raise RuntimeError("Docling OCR returned no text")
+                    except Exception as exc:
+                        if self._is_memory_failure(exc):
+                            recovered = self._recover_memory(
+                                pdf_path, (start, end), attempt_size,
+                                raise_on_hard=False,
+                            )
+                            if attempt_size > 1:
+                                batch_size = max(1, attempt_size // 2)
+                                memory_retries = 0
+                                continue
+                            if memory_retries == 0 and (
+                                recovered is None or recovered.state is not MemoryState.HARD
+                            ):
+                                memory_retries = 1
+                                continue
+                            if isinstance(exc, MemoryLimitExceeded):
+                                raise
+                            if recovered is not None:
+                                raise MemoryLimitExceeded(
+                                    recovered, stage="docling_parse",
+                                    file_path=str(pdf_path), page_range=(start, end),
+                                    batch_size=attempt_size,
+                                ) from exc
+                            raise self._memory_exception(
+                                pdf_path, (start, end), attempt_size,
+                            ) from exc
+
+                        if attempt_size > 1:
+                            batch_size = max(1, attempt_size // 2)
+                            self.release_resources()
+                            memory_retries = 0
+                            continue
+                        item = self._fallback_page(
+                            document[start - 1], start, ocr_client, force_ocr,
+                            "ocr" if self._legacy_implicit_model_dir else "qwen_ocr_fallback",
+                        )
+                        item["error_message"] = (
+                            f"docling: {exc}; {item.get('error_message', '')}"
+                        ).strip("; ")
+                        batch = [item]
+
+                    memory_retries = 0
+                    yield batch
+                    start = end + 1
+                    if progress:
+                        progress(end, total)
+        finally:
+            self.release_resources()
+
     def extract_pages(
         self, path: str | Path, ocr_client=None, force_ocr: bool = False,
         progress: Optional[Callable[[int, int], None]] = None,
     ) -> list[dict]:
-        pdf_path = Path(path)
-        pages: list[dict] = []
-        with fitz.open(pdf_path) as document:
-            total = len(document)
-            for start in range(1, total + 1, self.page_batch_size):
-                end = min(total, start + self.page_batch_size - 1)
-                try:
-                    batch = self._docling_batch(pdf_path, start, end)
-                    if force_ocr and not any(item.get("text") for item in batch):
-                        raise RuntimeError("Docling OCR returned no text")
-                except Exception as exc:
-                    batch = []
-                    for page_number in range(start, end + 1):
-                        item = self._fallback_page(
-                            document[page_number - 1], page_number, ocr_client, force_ocr,
-                            "ocr" if self._legacy_implicit_model_dir else "qwen_ocr_fallback",
-                        )
-                        item["error_message"] = f"docling: {exc}; {item.get('error_message', '')}".strip("; ")
-                        batch.append(item)
-                pages.extend(batch)
-                if progress:
-                    progress(end, total)
-        return pages
+        return [
+            page
+            for batch in self.iter_page_batches(path, ocr_client, force_ocr, progress)
+            for page in batch
+        ]
 
     @staticmethod
     def _markdown_blocks(text: str) -> list[dict]:

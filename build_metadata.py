@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-VERSION = "2.0.2"
+VERSION = "2.1.3"
 
 
 def build_info():

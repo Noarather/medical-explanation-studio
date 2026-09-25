@@ -185,8 +185,8 @@ def test_warning_rescan_keeps_ready_fast_path_and_backs_up(tmp_path, monkeypatch
     with DatabaseManager(str(tmp_path / "db.sqlite")) as db:
         book = db.add_library("book", "s", str(pdf))
         service = TextbookService(db, config, SimpleNamespace(get_embeddings=lambda texts: [[1., 0.] for _ in texts]))
-        parser = Mock(return_value=[{"page_number": 1, "text": "Textbook content sufficient for indexing with useful clinical context.", "extraction_method": "docling", "error_message": ""}])
-        service.parser.extract_pages = parser
+        parser = Mock(side_effect=lambda *args, **kwargs: (batch for batch in [[{"page_number": 1, "text": "Textbook content sufficient for indexing with useful clinical context.", "extraction_method": "docling", "error_message": ""}]]))
+        service.parser.iter_page_batches = parser
         monkeypatch.setattr("parser_health.parser_health", lambda *args: {"missing": []})
         backup = Mock()
         monkeypatch.setattr(db, "backup_database", backup)

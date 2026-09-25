@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import sys
+import json
 
 from db_manager import DatabaseManager
 from embedding_client import EmbeddingClient
 from llm_client import LLMClient
 from ocr_client import QwenOCRClient
 from runtime_config import runtime_config
+from memory_guard import MemoryLimitExceeded
 from services import (
     CancelledError, GenerationService, JobControl, MemoryCardBackfillService, StudyPointBackfillService,
     TagBackfillService, TextbookService, V2UpgradeService,
@@ -137,6 +139,24 @@ def run_job(job_id: str) -> int:
             database.update_job(job_id, status="completed", message=completion_message)
             database.add_job_event(job_id, "任务完成")
             return 0
+        except MemoryLimitExceeded as exc:
+            # Native inference allocators can retain RSS after models are freed.
+            # A fresh worker releases that memory; the durable stage avoids
+            # replaying parsed pages or committed, paid embedding batches.
+            current = database.get_job(job_id)
+            payload = dict(current.get("payload") or {})
+            point = [exc.stage, int(exc.page_range[0]) if exc.page_range else current["progress_current"]]
+            if job["job_type"] == "scan" and payload.get("_memory_restart_point") != point:
+                payload["_memory_restart_point"] = point
+                with database.conn:
+                    database.conn.execute("UPDATE jobs SET payload_json=? WHERE id=?",
+                                          (json.dumps(payload, ensure_ascii=False), job_id))
+                database.update_job(job_id, status="queued", message="正在释放解析进程内存，将从已保存断点继续")
+                database.add_job_event(job_id, f"内存回收：退出工作进程后从断点继续；{exc}", "warning")
+                return 75
+            database.update_job(job_id, status="failed", message="同一断点重启后仍超出内存上限", error=str(exc))
+            database.add_job_event(job_id, str(exc), "error")
+            return 1
         except CancelledError:
             database.update_job(job_id, status="cancelled", message="已取消")
             database.add_job_event(job_id, "任务取消", "warning")

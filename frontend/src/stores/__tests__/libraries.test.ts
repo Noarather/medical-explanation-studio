@@ -8,7 +8,7 @@ import { useLibrariesStore } from "../libraries"
 
 const ROW = {
   id: 3, name: "外科学（第10版）", subject: "外科学", version: "第10版",
-  root_path: "E:/教材/book.pdf", page_offset: 39, file_count: 1, page_count: 834,
+  root_path: "C:/fixtures/textbooks/book.pdf", page_offset: 39, file_count: 1, page_count: 834,
   ocr_page_count: 13, file_status: "ready", file_error: null, file_name: "book.pdf",
   index_fingerprint: "abc", index_state: "compatible",
 }
@@ -25,6 +25,20 @@ describe("libraries store", () => {
     await store.load()
     expect(store.libraries).toHaveLength(1)
     expect(store.currentFingerprint).toBe("abc")
+  })
+
+  it("较旧的异步响应不能覆盖索引完成后的状态", async () => {
+    let oldResolve: (value: unknown) => void = () => {}
+    invokeMock.mockImplementationOnce(() => new Promise(resolve => { oldResolve = resolve }))
+      .mockResolvedValueOnce({ libraries: [ROW], current_fingerprint: "new" })
+    const store = useLibrariesStore()
+    const oldRequest = store.load()
+    await store.load()
+    oldResolve({ libraries: [{ ...ROW, file_count: 0, index_state: "none" }], current_fingerprint: "old" })
+    await oldRequest
+    expect(store.libraries[0].index_state).toBe("compatible")
+    expect(store.currentFingerprint).toBe("new")
+    expect(store.loading).toBe(false)
   })
 
   it("submitDialog 新增走 add 并重载", async () => {
@@ -46,7 +60,7 @@ describe("libraries store", () => {
       .mockResolvedValueOnce({ libraries: [], current_fingerprint: "abc" })
     const store = useLibrariesStore()
     await store.submitDialog(ROW, {
-      name: "外科学（第11版）", subject: "外科学", root_path: "E:/教材/book.pdf",
+      name: "外科学（第11版）", subject: "外科学", root_path: "C:/fixtures/textbooks/book.pdf",
       version: "第11版", pdf_anchor: 41, textbook_anchor: 1,
     })
     expect(invokeMock).toHaveBeenNthCalledWith(1, "library", "update",

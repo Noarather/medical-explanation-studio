@@ -12,9 +12,9 @@ import { useReviewStore } from "../../stores/review"
 const EVIDENCE = [
   { textbook: "外科学", textbook_version: "第10版", source_file: "book.pdf",
     source_page: 508, pdf_page: 547, score: 0.82, text: "教材原文摘录……",
-    source_path: "E:/教材/book.pdf" },
+    source_path: "C:/fixtures/textbooks/book.pdf" },
   { textbook: "病理学", source_file: "patho.pdf", source_page: null, pdf_page: 12,
-    score: 0.61, text: "另一条摘录", source_path: "E:/教材/patho.pdf" },
+    score: 0.61, text: "另一条摘录", source_path: "C:/fixtures/textbooks/patho.pdf" },
 ]
 
 describe("EvidencePanel", () => {

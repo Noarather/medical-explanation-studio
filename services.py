@@ -272,6 +272,7 @@ class TextbookService:
             docling.get("page_batch_size", 8),
         )
         self.memory = MemoryGuard(config["memory_guard"]["max_memory_mb"])
+        self.parser.memory_guard = self.memory
 
     def scan_library(self, library_id: int, force_ocr: bool = False, control: Optional[JobControl] = None) -> dict:
         library = self.database.get_library(library_id)
@@ -323,6 +324,13 @@ class TextbookService:
             return {"files": 1, "changed": 0, "skipped": 1, "message": message}
 
         digest = sha256_file(path)
+        calibration = json.loads(library.get("calibration_json") or "{}")
+        if calibration.get("file_sha256") and calibration["file_sha256"] != digest:
+            # Preserve historical evidence, but never reuse a mapping for a replaced PDF.
+            with self.database.conn:
+                self.database.conn.execute("DELETE FROM library_page_map WHERE library_id=?", (library_id,))
+                self.database.conn.execute("UPDATE libraries SET calibration_json=? WHERE id=?",
+                    (json.dumps({"status": "stale", "message": "PDF 已变化，请重新校准页码"}, ensure_ascii=False), library_id))
         if not force_ocr and is_complete and existing["sha256"] == digest:
             self.database.upsert_file_metadata(
                 library_id, absolute, path.name, stat.st_size, stat.st_mtime_ns, digest, existing["status"],
@@ -343,36 +351,78 @@ class TextbookService:
         file_id = self.database.upsert_file_metadata(
             library_id, absolute, path.name, stat.st_size, stat.st_mtime_ns, digest,
         )
+        source = {"absolute_path": absolute, "relative_path": path.name, "file_size": stat.st_size,
+                  "modified_ns": stat.st_mtime_ns, "sha256": digest}
+        resume_key = json.dumps(["stream-index-1", str(self.database.path.resolve()), file_id,
+                                 absolute, digest, fingerprint, bool(force_ocr)], ensure_ascii=False)
+
+        def current_source():
+            current = path.stat()
+            return {**source, "file_size": current.st_size, "modified_ns": current.st_mtime_ns,
+                    "sha256": sha256_file(path)}
+
         try:
-            pages = self.parser.extract_pages(
-                path, self.ocr_client, force_ocr,
-                (lambda current, total: control.progress(current, total, f"Docling 解析 {path.name}：{current}/{total} 页")) if control else None,
-            )
-            chunks = self.parser.chunks_from_pages(pages)
-            if not chunks:
-                raise RuntimeError("PDF 没有提取到可索引正文；请检查文件是否损坏或 OCR 配置")
-            batch_size = int(self.config["memory_guard"]["batch_process_size"])
-            for start in range(0, len(chunks), batch_size):
+            with self.database.create_index_stage(resume_key) as stage:
+                saved_pages = stage.conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
+                parsed = stage.conn.execute("SELECT value FROM state WHERE key='parsed'").fetchone()
+                if not parsed:
+                    batches = self.parser.iter_page_batches(
+                        path, self.ocr_client, force_ocr,
+                        (lambda current, total: control.progress(current, total, f"Docling 解析 {path.name}：{current}/{total} 页（已保存断点）")) if control else None,
+                        start_page=saved_pages + 1,
+                    )
+                    try:
+                        for pages in batches:
+                            if control:
+                                control.checkpoint()
+                            chunks = self.parser.chunks_from_pages(pages)
+                            for item in chunks:
+                                item["search_text"] = " ".join(tokenize_for_fts(item["chunk_text"]))
+                            stage.save_parsed_batch(pages, chunks)
+                            del pages, chunks
+                    finally:
+                        batches.close()
+                    with stage.conn:
+                        stage.conn.execute("INSERT OR REPLACE INTO state VALUES ('parsed','1')")
+                # Parsing models are no longer needed during cloud embedding.
+                self.parser.release_resources()
+                chunk_count = stage.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                if not chunk_count:
+                    raise RuntimeError("PDF 没有提取到可索引正文；请检查文件是否损坏或 OCR 配置")
+                batch_size = max(1, int(self.config["memory_guard"]["batch_process_size"]))
+                while batch := stage.pending_chunks(batch_size):
+                    completed = stage.conn.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL").fetchone()[0]
+                    if control:
+                        control.checkpoint()
+                        control.progress(completed, chunk_count, f"向量化 {path.name} · {completed}/{chunk_count} 块（已保存断点）")
+                    self.memory.check(f"教材向量化 {path.name}")
+                    vectors = self.embedding_client.get_embeddings([item["chunk_text"] for item in batch])
+                    stage.save_vectors(batch, vectors, int(profile.get("dimension") or 0))
+                    del batch, vectors
+                fallback_pages, error_pages = stage.conn.execute(
+                    "SELECT COALESCE(SUM(extraction_method IN ('docling_fallback','rapidocr_fallback','qwen_ocr_fallback','ocr')),0), "
+                    "COALESCE(SUM(error_message!=''),0) FROM pages"
+                ).fetchone()
                 if control:
                     control.checkpoint()
-                    control.progress(start, len(chunks), f"向量化 {path.name} · {start}/{len(chunks)} 块")
-                self.memory.check(f"教材向量化 {path.name}")
-                batch = chunks[start:start + batch_size]
-                vectors = self.embedding_client.get_embeddings([item["chunk_text"] for item in batch])
-                for item, vector in zip(batch, vectors):
-                    item["embedding"] = vector
-                    item["search_text"] = " ".join(tokenize_for_fts(item["chunk_text"]))
-            self.database.replace_file_content(file_id, library_id, pages, chunks)
-            self.database.set_file_index_profile(file_id, profile, fingerprint)
+                summary = self.database.publish_index_stage(
+                    stage, file_id, library_id, source=source, profile=profile, fingerprint=fingerprint,
+                    revalidate_source=current_source, expected_dimension=int(profile.get("dimension") or 0) or None,
+                )
             self.database.infer_library_page_offset(library_id)
         except Exception as exc:
             self.database.mark_file_error(file_id, str(exc))
             raise
         self.database.finish_library_scan(library_id)
-        message = f"索引完成：{path.name}，{len(pages)} 页，{len(chunks)} 个文本块"
+        page_count = summary["page_count"]
+        completion = "索引完成（有解析降级／异常）" if fallback_pages or error_pages else "索引完成"
+        message = f"{completion}：{path.name}，{page_count} 页，{chunk_count} 个文本块"
+        if fallback_pages or error_pages:
+            message += f"；备用解析 {fallback_pages} 页，异常记录 {error_pages} 页，请在教材库查看详情"
         if control:
-            control.progress(len(chunks), len(chunks), message)
-        return {"files": 1, "changed": 1, "skipped": 0, "pages": len(pages), "chunks": len(chunks), "message": message}
+            control.progress(chunk_count, chunk_count, message)
+        return {"files": 1, "changed": 1, "skipped": 0, "pages": page_count, "chunks": chunk_count,
+                "fallback_pages": fallback_pages, "error_pages": error_pages, "message": message}
 
 
 class RetrievalService:

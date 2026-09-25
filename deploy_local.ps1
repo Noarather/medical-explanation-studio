@@ -66,7 +66,7 @@ try {
     # Validate portable contents and require successful packaging probes before changing the installation.
     & $taskPython -X utf8 $taskTool verify-app --release $ReleaseDirectory --source "$ReleaseDirectory\portable\MedExplainStudio"
     Check-Exit 'Portable manifest verification'
-    foreach ($taskProbeName in @('parser.json','ui.json')) {
+    foreach ($taskProbeName in @('parser.json','ui.json','ui-scroll.json')) {
         if (-not (Get-Content -LiteralPath "$ReleaseDirectory\checks\$taskProbeName" -Raw -Encoding UTF8 | ConvertFrom-Json).ok) { throw 'Packaging probe did not pass' }
     }
     $taskRecord.status = 'installing'
@@ -91,16 +91,19 @@ try {
         $env:LOCALAPPDATA = $taskChecks
         $env:MEDEXPLAIN_DATABASE_PATH = Join-Path $taskChecks 'isolated.db'
         $env:QT_QPA_PLATFORM = 'offscreen'
-        foreach ($taskProbe in @(@('--bundle-check','--parser-smoke-report',('"' + "$taskChecks\parser.json" + '"')), @('--ui-smoke-report',('"' + "$taskChecks\ui.json" + '"')))) {
+        foreach ($taskProbe in @(@('--bundle-check','--parser-smoke-report',('"' + "$taskChecks\parser.json" + '"')), @('--ui-smoke-report',('"' + "$taskChecks\ui.json" + '"')), @('--ui-scroll-smoke-report',('"' + "$taskChecks\ui-scroll.json" + '"')))) {
             $taskRun = Start-Process -FilePath $taskExe -ArgumentList $taskProbe -Wait -PassThru -WindowStyle Hidden
             if ($taskRun.ExitCode -ne 0) { throw 'Installed app probe failed; retain backup and inspect reports' }
         }
     } finally { $env:LOCALAPPDATA=$taskOldData; $env:MEDEXPLAIN_DATABASE_PATH=$taskOldDb; $env:QT_QPA_PLATFORM=$taskOldQt }
     $taskParser = Get-Content -LiteralPath "$taskChecks\parser.json" -Raw -Encoding UTF8 | ConvertFrom-Json
     $taskUi = Get-Content -LiteralPath "$taskChecks\ui.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not $taskParser.ok -or -not $taskUi.ok -or $taskUi.build.buildId -ne $taskBuild.buildId) { throw 'Installed check/build identity mismatch' }
+    $taskScroll = Get-Content -LiteralPath "$taskChecks\ui-scroll.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $taskParser.unicode_path -or -not $taskUi.indexRefresh.completedReloaded -or -not $taskScroll.indexRefresh.completedReloaded) { throw 'Installed Unicode PDF or index status refresh check missing' }
+    if (-not $taskParser.ok -or -not $taskUi.ok -or $taskUi.build.buildId -ne $taskBuild.buildId -or -not $taskScroll.ok -or $taskScroll.build.buildId -ne $taskBuild.buildId -or -not $taskScroll.textbookScroll.nativeWheel -or -not $taskScroll.textbookScroll.crossPageEdits) { throw 'Installed check/build identity mismatch' }
     $taskRecord.parserReport = "$taskChecks\parser.json"
     $taskRecord.uiReport = "$taskChecks\ui.json"
+    $taskRecord.scrollReport = "$taskChecks\ui-scroll.json"
     $taskRecord.shortcutTarget = if (Test-Path -LiteralPath $taskShortcut) { $taskShell.CreateShortcut($taskShortcut).TargetPath } else { '' }
     if ($taskRecord.shortcutTarget -and $taskRecord.shortcutTarget -ne $taskExe) { throw 'Desktop shortcut still points at a different application' }
     $taskRecord.status = 'installed_and_verified'

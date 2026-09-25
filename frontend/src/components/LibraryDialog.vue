@@ -105,6 +105,9 @@ const inputClass =
         <input v-model.number="textbookAnchor" type="number" min="1" max="20000" :class="inputClass" style="width: 90px" />
         <span class="shrink-0">页</span>
       </div>
+      <p v-if="editing?.calibration?.status" class="text-xs text-foreground-secondary">
+        此书已有自动分段校准；上方仅显示主要区间的偏移。只改名称／学科／版本会保留分段映射，修改页码差或 PDF 文件则改为手工统一偏移。
+      </p>
       <p v-if="offsetChanged" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning">
         修改页码差会同步重算已有证据的课本页码，并更新解析中的页码引用。
       </p>

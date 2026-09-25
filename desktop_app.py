@@ -11,6 +11,11 @@ import os
 import sys
 from pathlib import Path
 
+from ui_rendering import configure_renderer
+
+# Set compatibility policy before importing WebEngine or constructing QApplication.
+configure_renderer()
+
 from PySide6.QtCore import Qt, QProcess, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401 - must precede QApplication
@@ -87,6 +92,10 @@ class MainWindow(QMainWindow):
         self.runner.start()
 
     def closeEvent(self, event) -> None:
+        if self.bridges["library"]._tasks.active():
+            QMessageBox.information(self, "教材处理正在运行", "请等待教材识别／导入完成，或在教材库取消操作后再退出。")
+            event.ignore()
+            return
         if self.bridges["imports"]._batch_tasks.active():
             QMessageBox.information(self, "批量导入正在运行", "请等待批量操作完成，或在题目导入页取消操作后再退出。")
             event.ignore()
@@ -136,6 +145,9 @@ def bundle_self_check() -> int:
 
 
 if __name__ == "__main__":
+    if "--ui-scroll-smoke-report" in sys.argv:
+        from ui_smoke import run
+        raise SystemExit(run(sys.argv[sys.argv.index("--ui-scroll-smoke-report") + 1], native_scroll=True))
     if "--ui-smoke-report" in sys.argv:
         from ui_smoke import run
         raise SystemExit(run(sys.argv[sys.argv.index("--ui-smoke-report") + 1]))

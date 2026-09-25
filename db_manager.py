@@ -6,9 +6,11 @@ Dependencies: Python standard library only.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import struct
+import tempfile
 import uuid
 import unicodedata
 from collections import Counter
@@ -30,6 +32,172 @@ def decode_embedding(value: Optional[bytes], dimension: int) -> Optional[list[fl
     if len(value) != dimension * 4:
         raise ValueError(f"Embedding byte length does not match dimension {dimension}")
     return list(struct.unpack(f"<{dimension}f", value))
+
+
+class IndexBuildStage:
+    """Disk-backed, disposable storage for one complete file index build."""
+
+    OCR_METHODS = {"ocr", "rapidocr_fallback", "qwen_ocr_fallback"}
+
+    def __init__(self, directory: str | Path, *, resume_key: str | None = None):
+        self.persistent = resume_key is not None
+        if resume_key is not None:
+            import hashlib
+            self.path = Path(directory) / ("medexplain-index-" + hashlib.sha256(resume_key.encode()).hexdigest() + ".sqlite3")
+        else:
+            handle, name = tempfile.mkstemp(prefix="medexplain-index-", suffix=".sqlite3", dir=directory)
+            os.close(handle)
+            self.path = Path(name)
+        self.conn: Optional[sqlite3.Connection] = None
+        try:
+            self.conn = sqlite3.connect(self.path)
+            self.conn.executescript(
+                """
+                PRAGMA journal_mode=DELETE;
+                PRAGMA synchronous=NORMAL;
+                CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS pages (
+                    page_number INTEGER PRIMARY KEY,
+                    extraction_method TEXT NOT NULL,
+                    char_count INTEGER NOT NULL,
+                    error_message TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS chunks (
+                    page_number INTEGER NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    chunk_text TEXT NOT NULL,
+                    search_text TEXT NOT NULL,
+                    embedding BLOB,
+                    embedding_dim INTEGER,
+                    extraction_method TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    PRIMARY KEY(page_number, chunk_index)
+                );
+                """
+            )
+        except Exception:
+            self.cleanup()
+            raise
+
+    def _connection(self) -> sqlite3.Connection:
+        if self.conn is None:
+            raise RuntimeError("索引暂存区已关闭")
+        return self.conn
+
+    def append_pages(self, pages: Iterable[dict]) -> None:
+        connection = self._connection()
+        with connection:
+            connection.executemany(
+                "INSERT INTO pages VALUES (?, ?, ?, ?)",
+                ((int(item["page_number"]), item["extraction_method"],
+                  len(item.get("text", "")), item.get("error_message", "")) for item in pages),
+            )
+
+    def append_chunks(self, chunks: Iterable[dict]) -> None:
+        connection = self._connection()
+
+        def rows():
+            for item in chunks:
+                embedding = item.get("embedding")
+                yield (
+                    int(item["page_number"]), int(item["chunk_index"]), item["chunk_text"],
+                    item["search_text"], encode_embedding(embedding),
+                    len(embedding) if embedding is not None else None,
+                    item.get("extraction_method", "text"),
+                    json.dumps(item.get("metadata") or {}, ensure_ascii=False, sort_keys=True),
+                )
+
+        with connection:
+            connection.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows())
+
+    def validate(self, expected_dimension: Optional[int] = None) -> dict:
+        connection = self._connection()
+        page = connection.execute(
+            "SELECT COUNT(*), MIN(page_number), MAX(page_number), "
+            "SUM(extraction_method IN ('ocr','rapidocr_fallback','qwen_ocr_fallback')) FROM pages"
+        ).fetchone()
+        page_count = int(page[0])
+        if not page_count or int(page[1]) != 1 or int(page[2]) != page_count:
+            raise ValueError("暂存页码不完整或不连续")
+        chunk = connection.execute(
+            "SELECT COUNT(*), SUM(embedding IS NULL), MIN(embedding_dim), MAX(embedding_dim) FROM chunks"
+        ).fetchone()
+        chunk_count = int(chunk[0])
+        if not chunk_count:
+            raise ValueError("暂存索引没有正文分块")
+        if int(chunk[1] or 0) or chunk[2] != chunk[3] or (
+            expected_dimension is not None and chunk[2] != int(expected_dimension)
+        ):
+            raise ValueError("暂存索引向量缺失或维度不一致")
+        orphan = connection.execute(
+            "SELECT COUNT(*) FROM chunks c LEFT JOIN pages p USING(page_number) WHERE p.page_number IS NULL"
+        ).fetchone()[0]
+        if orphan:
+            raise ValueError("暂存索引包含无对应页面的分块")
+        errors = [row[0] for row in connection.execute(
+            "SELECT DISTINCT error_message FROM pages WHERE error_message!='' LIMIT 5"
+        )]
+        return {"page_count": page_count, "chunk_count": chunk_count,
+                "ocr_page_count": int(page[3] or 0),
+                "embedding_dimension": int(chunk[2]), "errors": errors}
+
+    def close(self) -> None:
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
+
+    def cleanup(self) -> None:
+        self.close()
+        self.path.unlink(missing_ok=True)
+
+    def __enter__(self) -> "IndexBuildStage":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        if self.persistent:
+            self.close()
+        else:
+            self.cleanup()
+
+    def save_parsed_batch(self, pages: list[dict], chunks: list[dict]) -> None:
+        # Both tables advance together, including when a process is interrupted.
+        connection = self._connection()
+        connection.execute("SAVEPOINT parsed_batch")
+        try:
+            # Unlike append_*, these two inserts must share one transaction.
+            connection.executemany("INSERT INTO pages VALUES (?, ?, ?, ?)", (
+                (p["page_number"], p["extraction_method"], len(p.get("text", "")), p.get("error_message", "")) for p in pages
+            ))
+            connection.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)", (
+                (c["page_number"], c["chunk_index"], c["chunk_text"], c["search_text"],
+                 c.get("extraction_method", "text"), json.dumps(c.get("metadata") or {}, ensure_ascii=False)) for c in chunks
+            ))
+            connection.execute("RELEASE parsed_batch")
+        except BaseException:
+            connection.execute("ROLLBACK TO parsed_batch")
+            connection.execute("RELEASE parsed_batch")
+            raise
+
+    def pending_chunks(self, limit: int) -> list[dict]:
+        return [dict(zip(("page_number", "chunk_index", "chunk_text"), row)) for row in self._connection().execute(
+            "SELECT page_number, chunk_index, chunk_text FROM chunks WHERE embedding IS NULL ORDER BY page_number, chunk_index LIMIT ?", (limit,)
+        )]
+
+    def save_vectors(self, chunks: list[dict], vectors, expected_dimension: int = 0) -> None:
+        import math
+        if len(vectors) != len(chunks):
+            raise ValueError("向量服务返回数量不一致，保留断点等待重试")
+        dimension = expected_dimension or (len(vectors[0]) if vectors else 0)
+        if not dimension or any(len(v) != dimension or not all(math.isfinite(float(x)) for x in v) for v in vectors):
+            raise ValueError("向量维度不一致或包含非法数值")
+        existing = self._connection().execute("SELECT embedding_dim FROM chunks WHERE embedding IS NOT NULL LIMIT 1").fetchone()
+        if existing and existing[0] != dimension:
+            raise ValueError("向量维度与已保存断点不一致")
+        with self._connection():
+            self._connection().executemany(
+                "UPDATE chunks SET embedding=?, embedding_dim=? WHERE page_number=? AND chunk_index=?",
+                ((encode_embedding(v), dimension, c["page_number"], c["chunk_index"]) for c, v in zip(chunks, vectors)),
+            )
 
 
 class DatabaseManager:
@@ -243,6 +411,12 @@ class DatabaseManager:
             self.conn.execute(
                 "ALTER TABLE libraries ADD COLUMN page_offset INTEGER NOT NULL DEFAULT 0"
             )
+        if "calibration_json" not in library_columns:
+            self.conn.execute("ALTER TABLE libraries ADD COLUMN calibration_json TEXT NOT NULL DEFAULT '{}'")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS library_page_map (
+            library_id INTEGER NOT NULL REFERENCES libraries(id),
+            pdf_page INTEGER NOT NULL, printed_page INTEGER NOT NULL,
+            PRIMARY KEY (library_id, pdf_page))""")
         file_columns = {
             row["name"] for row in self.conn.execute("PRAGMA table_info(textbook_files)").fetchall()
         }
@@ -644,11 +818,15 @@ class DatabaseManager:
         source = Path(root_path)
         if not source.is_file() or source.suffix.lower() != ".pdf":
             raise ValueError("教材来源必须是可以访问的 PDF 文件")
+        previous = self.get_library(library_id)
         self.conn.execute(
             "UPDATE libraries SET name=?, subject=?, version=?, root_path=? WHERE id=?",
             (name.strip(), subject.strip(), version.strip(), str(source.resolve()), library_id),
         )
-        self.set_library_page_offset(library_id, int(page_offset))
+        if not previous or previous["root_path"] != str(source.resolve()) or previous["page_offset"] != int(page_offset):
+            self.set_library_page_offset(library_id, int(page_offset))
+        else:
+            self.conn.commit()  # Metadata-only edits preserve verified multi-section pagination.
 
     def set_library_page_offset(self, library_id: int, page_offset: int) -> None:
         """Save calibration and migrate stored evidence without changing PDF locators."""
@@ -659,8 +837,9 @@ class DatabaseManager:
             ).fetchall()
         }
         with self.conn:
+            self.conn.execute("DELETE FROM library_page_map WHERE library_id=?", (library_id,))
             self.conn.execute(
-                "UPDATE libraries SET page_offset=? WHERE id=?", (page_offset, library_id)
+                "UPDATE libraries SET page_offset=?, calibration_json='{}' WHERE id=?", (page_offset, library_id)
             )
             if not paths:
                 return
@@ -699,6 +878,8 @@ class DatabaseManager:
         library = self.get_library(library_id)
         if not library:
             return None
+        if library.get("calibration_json", "{}") != "{}":
+            return json.loads(library["calibration_json"]).get("offset")
         if not force and int(library.get("page_offset", 0)) != 0:
             return int(library["page_offset"])
         rows = self.conn.execute(
@@ -723,6 +904,59 @@ class DatabaseManager:
             return None
         self.set_library_page_offset(library_id, offset)
         return offset
+
+    def apply_library_calibration(self, library_id: int, calibration: dict, *, commit=True) -> int:
+        """Apply inspected page mapping; uncertain pages have no invented printed number.
+
+        Existing prose is preserved and marked for re-review, not globally string-replaced.
+        Caller owns the transaction when commit=False (batch import).
+        """
+        library = self.get_library(library_id)
+        if not library:
+            raise ValueError("教材不存在")
+        mapping = {int(k): int(v) for k, v in calibration.get("mapping", {}).items()}
+        count = int(calibration["page_count"])
+        if any(not 1 <= k <= count or not 1 <= v <= 20000 for k, v in mapping.items()):
+            raise ValueError("页码映射超出范围")
+        summary = {k: v for k, v in calibration.items() if k not in {"mapping", "anchors"}}
+        summary["anchors"] = calibration.get("anchors", [])[:20]
+        self.conn.execute("DELETE FROM library_page_map WHERE library_id=?", (library_id,))
+        self.conn.executemany("INSERT INTO library_page_map VALUES(?,?,?)",
+                              [(library_id, k, v) for k, v in mapping.items()])
+        self.conn.execute("UPDATE libraries SET page_offset=?, calibration_json=? WHERE id=?",
+                          (int(calibration.get("offset") or 0), json.dumps(summary, ensure_ascii=False), library_id))
+        # A library may retain old indexed files after its source PDF is changed.
+        # Calibration belongs only to the inspected current file, never those older sources.
+        paths = {r[0] for r in self.conn.execute(
+            "SELECT absolute_path FROM textbook_files WHERE library_id=? AND absolute_path=?",
+            (library_id, library["root_path"]))}
+        changed_count = 0
+        if paths:
+            for row in self.conn.execute("SELECT id, evidence_json, raw_json FROM imported_questions WHERE evidence_json!='[]'").fetchall():
+                evidence, changed = json.loads(row["evidence_json"]), False
+                for item in evidence:
+                    # Without a physical locator, a historical printed page must not be guessed.
+                    if item.get("source_path") not in paths or not item.get("pdf_page"):
+                        continue
+                    printed = mapping.get(int(item["pdf_page"]))
+                    if item.get("source_page") != printed:
+                        item["source_page"] = printed
+                        changed = True
+                if changed:
+                    raw = json.loads(row["raw_json"])
+                    from question_format_v2 import normalize_evidence
+                    meta = raw.setdefault("explanationMeta", {})
+                    meta["evidence"] = normalize_evidence(evidence)
+                    warnings = meta.setdefault("reviewWarnings", [])
+                    warning = "教材页码校准已更新，请复核解析文字中的页码引用"
+                    if warning not in warnings:
+                        warnings.append(warning)
+                    self.conn.execute("UPDATE imported_questions SET evidence_json=?, raw_json=?, review_status='pending', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (json.dumps(evidence, ensure_ascii=False), json.dumps(raw, ensure_ascii=False), row["id"]))
+                    changed_count += 1
+        if commit:
+            self.conn.commit()
+        return changed_count
 
     def infer_all_library_page_offsets(self) -> None:
         rows = self.conn.execute(
@@ -775,41 +1009,137 @@ class DatabaseManager:
         self.conn.commit()
         return int(self.conn.execute("SELECT id FROM textbook_files WHERE absolute_path=?", (absolute_path,)).fetchone()[0])
 
-    def replace_file_content(self, file_id: int, library_id: int, pages: list[dict], chunks: list[dict]) -> None:
+    def create_index_stage(self, resume_key: str | None = None) -> IndexBuildStage:
+        return IndexBuildStage(self.path.parent, resume_key=resume_key)
+
+    def publish_index_stage(
+        self, stage: IndexBuildStage, file_id: int, library_id: int, *,
+        source: dict, profile: dict, fingerprint: str,
+        revalidate_source=None, expected_dimension: Optional[int] = None,
+    ) -> dict:
+        """Validate and atomically replace one file's complete searchable index."""
+        attached = False
+        primary_error = None
+        try:
+            summary = stage.validate(expected_dimension)
+            stage.close()
+            self.conn.execute("ATTACH DATABASE ? AS index_stage", (str(stage.path),))
+            attached = True
+            with self.conn:
+                row = self.conn.execute(
+                    "SELECT id FROM textbook_files WHERE id=?", (int(file_id),)
+                ).fetchone()
+                if not row:
+                    raise ValueError("待发布的教材文件记录不存在")
+                if revalidate_source is not None:
+                    current = revalidate_source()
+                    identity_keys = ("absolute_path", "file_size", "modified_ns", "sha256")
+                    if any(current.get(key) != source.get(key) for key in identity_keys):
+                        raise ValueError("教材文件在索引期间发生变化，请重新建立索引")
+                self.conn.execute("DELETE FROM textbook_pages WHERE file_id=?", (int(file_id),))
+                self.conn.execute("DELETE FROM chunks_v2 WHERE file_id=?", (int(file_id),))
+                self.conn.execute(
+                    """INSERT INTO textbook_pages
+                       (file_id, page_number, extraction_method, char_count, error_message)
+                       SELECT ?, page_number, extraction_method, char_count, error_message
+                       FROM index_stage.pages ORDER BY page_number""",
+                    (int(file_id),),
+                )
+                self.conn.execute(
+                    """INSERT INTO chunks_v2
+                       (library_id, file_id, page_number, chunk_index, chunk_text, search_text,
+                        embedding, embedding_dim, extraction_method, metadata_json)
+                       SELECT ?, ?, page_number, chunk_index, chunk_text, search_text,
+                              embedding, embedding_dim, extraction_method, metadata_json
+                       FROM index_stage.chunks ORDER BY page_number, chunk_index""",
+                    (int(library_id), int(file_id)),
+                )
+                status = "warning" if summary["errors"] else "ready"
+                cursor = self.conn.execute(
+                    """UPDATE textbook_files SET library_id=?, absolute_path=?, relative_path=?,
+                       file_size=?, modified_ns=?, sha256=?, status=?, page_count=?,
+                       ocr_page_count=?, index_profile_json=?, index_fingerprint=?,
+                       error_message=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (int(library_id), source["absolute_path"], source["relative_path"],
+                     int(source["file_size"]), int(source["modified_ns"]), source["sha256"],
+                     status, summary["page_count"], summary["ocr_page_count"],
+                     json.dumps(profile, ensure_ascii=False, sort_keys=True), fingerprint,
+                     "；".join(summary["errors"]), int(file_id)),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("待发布的教材文件记录不存在")
+            return summary
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                if attached:
+                    self.conn.execute("DETACH DATABASE index_stage")
+            except sqlite3.Error:
+                if primary_error is None:
+                    raise
+            finally:
+                if primary_error is not None and stage.persistent:
+                    stage.close()
+                else:
+                    stage.cleanup()
+
+    def replace_file_content(
+        self, file_id: int, library_id: int,
+        pages: Iterable[dict], chunks: Iterable[dict],
+    ) -> None:
+        page_count = 0
+        ocr_count = 0
+        errors = []
+        seen_errors = set()
+
+        def page_rows():
+            nonlocal page_count, ocr_count
+            for item in pages:
+                page_count += 1
+                if item["extraction_method"] in IndexBuildStage.OCR_METHODS:
+                    ocr_count += 1
+                error = item.get("error_message", "")
+                if error and error not in seen_errors and len(errors) < 5:
+                    seen_errors.add(error)
+                    errors.append(error)
+                yield (
+                    file_id, item["page_number"], item["extraction_method"],
+                    len(item.get("text", "")), error,
+                )
+
+        def chunk_rows():
+            for item in chunks:
+                embedding = item.get("embedding")
+                yield (
+                    library_id, file_id, item["page_number"], item["chunk_index"],
+                    item["chunk_text"], item["search_text"], encode_embedding(embedding),
+                    len(embedding) if embedding is not None else None,
+                    item.get("extraction_method", "text"),
+                    json.dumps(item.get("metadata") or {}, ensure_ascii=False, sort_keys=True),
+                )
+
         with self.conn:
             self.conn.execute("DELETE FROM textbook_pages WHERE file_id=?", (file_id,))
             self.conn.execute("DELETE FROM chunks_v2 WHERE file_id=?", (file_id,))
             self.conn.executemany(
                 """INSERT INTO textbook_pages(file_id, page_number, extraction_method, char_count, error_message)
                    VALUES(?, ?, ?, ?, ?)""",
-                [
-                    (file_id, item["page_number"], item["extraction_method"],
-                     len(item.get("text", "")), item.get("error_message", ""))
-                    for item in pages
-                ],
+                page_rows(),
             )
             self.conn.executemany(
                 """INSERT INTO chunks_v2
                     (library_id, file_id, page_number, chunk_index, chunk_text, search_text,
                      embedding, embedding_dim, extraction_method, metadata_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        library_id, file_id, item["page_number"], item["chunk_index"],
-                        item["chunk_text"], item["search_text"], encode_embedding(item.get("embedding")),
-                        len(item["embedding"]) if item.get("embedding") is not None else None,
-                        item.get("extraction_method", "text"),
-                        json.dumps(item.get("metadata") or {}, ensure_ascii=False, sort_keys=True),
-                    )
-                    for item in chunks
-                ],
+                chunk_rows(),
             )
-            ocr_count = sum(1 for page in pages if page["extraction_method"] in {"ocr", "rapidocr_fallback", "qwen_ocr_fallback"})
-            errors = list(dict.fromkeys(page["error_message"] for page in pages if page.get("error_message")))
             self.conn.execute(
                 """UPDATE textbook_files SET status=?, page_count=?, ocr_page_count=?,
                    error_message=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                ("warning" if errors else "ready", len(pages), ocr_count, "；".join(errors[:5]), file_id),
+                ("warning" if errors else "ready", page_count, ocr_count,
+                 "；".join(errors), file_id),
             )
 
     def mark_missing_files(self, library_id: int, seen_paths: set[str]) -> None:
@@ -907,13 +1237,15 @@ class DatabaseManager:
         placeholders = ",".join("?" for _ in library_ids)
         sql = f"""SELECT c.id, c.chunk_text, c.embedding, c.embedding_dim, c.metadata_json,
                    c.page_number AS pdf_page,
-                   c.page_number - l.page_offset AS textbook_page,
+                   CASE WHEN l.calibration_json!='{{}}' THEN COALESCE(pm.printed_page, 0)
+                        ELSE c.page_number - l.page_offset END AS textbook_page,
                    c.extraction_method, f.absolute_path AS source_path, f.relative_path AS source_file,
                    l.id AS library_id, l.name AS textbook, l.version AS textbook_version,
                    bm25(chunks_fts) AS bm25_score
                    FROM chunks_fts JOIN chunks_v2 c ON c.id=chunks_fts.rowid
                    JOIN textbook_files f ON f.id=c.file_id
                    JOIN libraries l ON l.id=c.library_id
+                   LEFT JOIN library_page_map pm ON pm.library_id=c.library_id AND pm.pdf_page=c.page_number
                    WHERE chunks_fts MATCH ? AND c.library_id IN ({placeholders})
                      AND f.status IN ('ready', 'warning')
                      {"AND f.index_fingerprint=?" if index_fingerprint else ""}

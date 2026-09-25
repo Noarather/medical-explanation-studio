@@ -5,6 +5,7 @@ export interface JobRow {
   id: string; job_type: string; title: string; status: string
   progress_current: number; progress_total: number; message: string
   error?: string; created_at?: string; updated_at?: string
+  payload_json?: string
 }
 
 export const useJobsStore = defineStore("jobs", {

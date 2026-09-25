@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location $PSScriptRoot
 
-$Version = "2.0.2"
+$Version = "2.1.3"
 $BuildVenv = Join-Path $PSScriptRoot ".venv-build"
 $BuildPython = Join-Path $BuildVenv "Scripts\python.exe"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -115,11 +115,14 @@ $ParserProbeArguments = @("--bundle-check", "--parser-smoke-report", ('"' + $Par
 $probe = Start-Process -FilePath $ExePath -ArgumentList $ParserProbeArguments -Wait -PassThru -WindowStyle Hidden
 if ($probe.ExitCode -ne 0) { throw "Bundled Python import probe failed with exit code $($probe.ExitCode)" }
 $ParserProbeResult = Get-Content -LiteralPath $ParserProbeReport -Raw -Encoding UTF8 | ConvertFrom-Json
-if (-not $ParserProbeResult.ok -or -not $ParserProbeResult.utf8_mode) { throw "Bundled PDF/OCR or UTF-8 probe failed" }
+if (-not $ParserProbeResult.ok -or -not $ParserProbeResult.utf8_mode -or -not $ParserProbeResult.unicode_path) { throw "Bundled PDF/OCR, Unicode path or UTF-8 probe failed" }
 Write-Host "  OK  bundled imports, synthetic PDF extraction, OCR and UTF-8"
 $UiReport = Join-Path $ReleaseDir "checks\ui.json"
 $UiProbe = Start-Process -FilePath $ExePath -ArgumentList @('--ui-smoke-report', ('"' + $UiReport + '"')) -Wait -PassThru -WindowStyle Hidden
 if ($UiProbe.ExitCode -ne 0) { throw "Packaged UI probe failed" }
+$ScrollReport = Join-Path $ReleaseDir "checks\ui-scroll.json"
+$ScrollProbe = Start-Process -FilePath $ExePath -ArgumentList @('--ui-scroll-smoke-report', ('"' + $ScrollReport + '"')) -Wait -PassThru -WindowStyle Hidden
+if ($ScrollProbe.ExitCode -ne 0) { throw "Packaged native scroll probe failed" }
 
 Write-Host "[7/9] Optional code signing"
 $Signed = $false
