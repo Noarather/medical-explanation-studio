@@ -1,5 +1,5 @@
 ﻿#define MyAppName "医学题库智能解析"
-#define MyAppVersion "2.2.0"
+#define MyAppVersion "2.2.1"
 #define MyAppExeName "MedExplainStudio.exe"
 
 [Setup]

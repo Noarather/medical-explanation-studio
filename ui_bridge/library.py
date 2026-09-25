@@ -43,6 +43,32 @@ class LibraryBridge(BridgeBase):
         super().__init__(parent)
         self._database_path = database_path
         self._tasks = BatchTasks()
+        self._ocr_tasks = BatchTasks()
+
+    def api_ocr_review_start(self, library_id: int, pdf_page: int, model: str, consent: bool = False) -> dict:
+        if consent is not True:
+            raise ValueError("bad_payload: 请先确认单页双模型调用与费用说明")
+        from ocr_review import compare_page, REVIEW_MODELS
+        if type(library_id) is not int or type(pdf_page) is not int or pdf_page < 1 or model not in REVIEW_MODELS:
+            raise ValueError("bad_payload: 复核参数无效")
+        def review(progress):
+            return compare_page(self._database_path, library_id, pdf_page, model,
+                                runtime_config(database_override=self._database_path), progress)
+        return self._ocr_tasks.start("ocr_review", review)
+
+    def api_ocr_review_status(self, token: str) -> dict:
+        return self._ocr_tasks.status(token)
+
+    def api_ocr_review_active(self) -> dict:
+        return {"task": self._ocr_tasks.active()}
+
+    def api_ocr_review_history(self, library_id: int) -> dict:
+        from ocr_review import history
+        return {"items": history(self._database_path, library_id)}
+
+    def api_ocr_review_report(self, library_id: int, review_id: str) -> dict:
+        from ocr_review import get_report
+        return get_report(self._database_path, library_id, review_id)
 
     def api_list(self) -> dict:
         profile = build_index_profile(runtime_config())

@@ -6,6 +6,27 @@ import time
 from pathlib import Path
 
 
+def check_ocr_review_entry(app, window, js):
+    """Open the real review UI, exercise its history bridge, never call paid start."""
+    js("location.hash='#/library'")
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if js("(()=>{const b=Array.from(document.querySelectorAll('button')).find(b=>b.innerText.trim()==='高级 OCR 复核');if(!b)return false;b.click();return true})()"):
+            break
+        app.processEvents(); time.sleep(.05)
+    else:
+        raise RuntimeError("Missing advanced OCR review entry")
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if js("(()=>{const p=document.querySelector('[aria-label=\"单页高级 OCR 复核\"]');return p && p.querySelector('select') && Array.from(p.querySelectorAll('button')).some(b=>b.innerText==='开始单页复核'&&b.disabled)})()"):
+            break
+        app.processEvents(); time.sleep(.05)
+    else:
+        raise RuntimeError("Advanced OCR consent gate missing")
+    js("Array.from(document.querySelector('[aria-label=\"单页高级 OCR 复核\"]').querySelectorAll('button')).find(b=>b.innerText==='关闭').click()")
+    return {"entry": True, "consentRequired": True, "live_api": False}
+
+
 def check_import_repair(app, window, js, folder, report_path):
     """Exercise the actual Vue/Qt bridge with synthetic data, never business files."""
     sample = Path(folder) / "synthetic-import.json"
@@ -364,6 +385,7 @@ def run(report_path, *, native_scroll=False):
             report["importRepair"] = check_import_repair(app, window, js, folder, report_path)
             report["textbookBatch"] = check_textbook_import(app, window, js, folder, report_path)
             report["indexRefresh"] = check_index_refresh(app, window, js, report_path)
+            report["ocrReview"] = check_ocr_review_entry(app, window, js)
             if native_scroll:
                 report["textbookScroll"] = check_textbook_scroll(app, window, js, folder, report_path)
             report["rendering"] = {"qtQuickBackend":os.environ.get("QT_QUICK_BACKEND", "auto"),

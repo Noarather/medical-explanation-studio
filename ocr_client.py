@@ -63,6 +63,7 @@ class QwenOCRClient:
         self.base_url = compatible_url(base_url)
         self.client = OpenAI(api_key=api_key, base_url=self.base_url, timeout=timeout, max_retries=0)
         self.last_trace: dict = {}
+        self.last_raw_text = ""
 
     def recognize_image(self, path: str | Path, max_retries: int = 2, *, plain_text: bool = False) -> str:
         data = Path(path).read_bytes()
@@ -70,6 +71,7 @@ class QwenOCRClient:
         image = "data:" + mime + ";base64," + base64.b64encode(data).decode("ascii")
         started = time.monotonic()
         self.last_trace = {}
+        self.last_raw_text = ""
         for attempt in range(max(1, min(3, max_retries))):
             try:
                 result = self.client.chat.completions.create(
@@ -79,6 +81,7 @@ class QwenOCRClient:
                         {"type": "text", "text": "只输出图像中的原始文字，不使用 LaTeX、Markdown 或解释。" if plain_text else OCR_PROMPT},
                     ]}],
                     max_tokens=16384 if self.model.startswith("qwen3.5-ocr") else 8192,
+                    **({"extra_body": {"enable_thinking": False}} if self.model.startswith("qwen3") and "ocr" not in self.model else {}),
                 )
                 choice = result.choices[0]
                 self.last_trace = {"model": result.model, "requestId": result.id,
@@ -90,6 +93,7 @@ class QwenOCRClient:
                 value = (choice.message.content or "").strip()
                 if not value:
                     raise RuntimeError("云端 OCR 返回空内容，请检查原页并重试")
+                self.last_raw_text = value
                 return normalize_ocr_text(value)
             except (APIConnectionError, APITimeoutError, APIStatusError) as exc:
                 status = getattr(exc, "status_code", None)

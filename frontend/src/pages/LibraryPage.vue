@@ -7,6 +7,7 @@ import { useLibrariesStore } from "../stores/libraries"
 import type { LibraryRow } from "../stores/libraries"
 import LibraryDialog from "../components/LibraryDialog.vue"
 import TextbookImportDialog from "../components/TextbookImportDialog.vue"
+import OcrReviewDialog from "../components/OcrReviewDialog.vue"
 
 const store = useLibrariesStore()
 const jobs = useJobsStore()
@@ -25,6 +26,7 @@ watch(() => jobs.jobs.filter(job => job.job_type === "scan")
 
 const cloudNoticeRow = ref<LibraryRow | null>(null)
 const batchOpen = ref(false)
+const reviewLibrary = ref<LibraryRow | null>(null)
 const calibrating = ref<LibraryRow | null>(null)
 function openBatch(row: LibraryRow | null = null) { calibrating.value = row; batchOpen.value = true }
 const health = ref<{ ok: boolean; message: string } | null>(null)
@@ -188,6 +190,7 @@ function onRemove(row: LibraryRow) {
           >{{ ['partial', 'error'].includes(row.index_state) ? '重试异常索引' : row.file_count ? '建立 / 更新索引' : '建立索引' }}</button>
           <button class="rounded-md border border-border px-2.5 py-1 hover:bg-muted disabled:opacity-50" :disabled="!!scanJob(row)" @click="openBatch(row)">自动校准页码</button>
           <button class="rounded-md border border-border px-2.5 py-1 hover:bg-muted" @click="store.openEdit(row)">编辑</button>
+          <button class="rounded-md border border-border px-2.5 py-1 hover:bg-muted" @click="reviewLibrary = row">高级 OCR 复核</button>
           <button
             class="flex items-center gap-1 rounded-md border border-destructive/50 px-2.5 py-1 text-destructive hover:bg-destructive/5"
             @click="onRemove(row)"
@@ -197,6 +200,7 @@ function onRemove(row: LibraryRow) {
     </div>
 
     <LibraryDialog v-model:open="store.dialogOpen" :editing="store.editing" />
+    <OcrReviewDialog :library="reviewLibrary" @close="reviewLibrary = null" />
     <TextbookImportDialog v-model:open="batchOpen" :calibrating="calibrating" @saved="run(() => store.load())" />
 
     <div v-if="cloudNoticeRow" class="fixed inset-0 z-40 bg-foreground/20" @click="cloudNoticeRow = null" />
