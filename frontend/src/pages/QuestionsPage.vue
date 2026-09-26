@@ -25,7 +25,7 @@ const statusLabel = computed({
 const bulkSubject = ref("")
 const confirmDelete = ref(false)
 const confirmPurge = ref(false)
-interface GenerationPreview { set_id: string; name: string; total: number; count: number; skipped: number; active: boolean; token: string }
+interface GenerationPreview { set_id: string; name: string; total: number; count: number; skipped: number; previous: number; reviewed: number; active: boolean; token: string }
 const generationPreview = ref<GenerationPreview | null>(null)
 const generationBusy = ref(false)
 const generationConsent = ref(false)
@@ -140,16 +140,16 @@ function onPurge() {
     <template v-if="store.tab === 'questions'">
       <div class="mb-4 rounded-lg border border-border bg-background p-3 text-sm">
         <button data-testid="first-generation" class="rounded-md bg-primary px-3 py-2 text-onprimary disabled:opacity-50"
-          :disabled="!store.filters.set_id || generationBusy" @click="previewGeneration">整批首次生成解析</button>
+          :disabled="!store.filters.set_id || generationBusy" @click="previewGeneration">整批生成／重新生成解析</button>
         <span class="ml-3 text-foreground-secondary">先选择下方导入批次；覆盖该批次全部分页，不受搜索、筛选或勾选范围影响。</span>
         <div v-if="generationPreview" class="mt-3 space-y-2">
-          <p>批次：{{ generationPreview.name }} · 共 {{ generationPreview.total }} 题；可首次生成 {{ generationPreview.count }} 题，跳过 {{ generationPreview.skipped }} 题。</p>
-          <p>仅生成等待中的无解析题目；已有解析、已审核或已处理题目保持不变。</p>
+          <p>批次：{{ generationPreview.name }} · 共 {{ generationPreview.total }} 题；本次将重新生成 {{ generationPreview.count }} 题，跳过 {{ generationPreview.skipped }} 题。</p>
+          <p>其中 {{ generationPreview.previous }} 题已有解析、{{ generationPreview.reviewed }} 题已审核。新结果将替换原解析，审核状态将重置为待审核。</p>
           <p v-if="generationPreview.active" class="text-destructive">本批次已有生成任务，请先在任务中心处理。</p>
-          <label class="flex items-center gap-2"><input v-model="generationConsent" type="checkbox" data-testid="generation-consent" />我确认处理此批次，题目与候选教材内容会发送至已配置的云端模型并产生费用。</label>
+          <label class="flex items-center gap-2"><input v-model="generationConsent" type="checkbox" data-testid="generation-consent" />我确认重新生成整个批次，已有解析及审核状态会更新；题目与候选教材内容将发送至云端模型并产生费用。</label>
           <button data-testid="generation-choose" class="rounded-md bg-primary px-3 py-2 text-onprimary disabled:opacity-50"
             :disabled="generationBusy || !generationConsent || !generationPreview.count || generationPreview.active"
-            @click="generationPicker = true">选择教材并生成</button>
+            @click="generationPicker = true">选择教材并重新生成</button>
           <button class="ml-2 rounded-md border border-border px-3 py-2" :disabled="generationBusy" @click="generationPreview = null">取消</button>
         </div>
       </div>

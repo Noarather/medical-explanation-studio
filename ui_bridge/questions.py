@@ -21,23 +21,28 @@ class QuestionsBridge(BridgeBase):
             raise ValueError("not_found: 请先选择一个导入批次")
         rows = database.conn.execute("SELECT * FROM imported_questions WHERE set_id=? ORDER BY id", (set_id,)).fetchall()
         ids = []
+        previous = 0
+        reviewed = 0
+        snapshot = []
         for row in rows:
             raw = json.loads(row["raw_json"] or "{}")
-            if (row["pipeline_status"] == "queued" and row["generation_status"] == "pending"
-                    and row["review_status"] == "pending" and not row["generation_mode"]
-                    and not str(row["explanation"] or "").strip()
-                    and not raw.get("explanation") and not raw.get("explanationBlocks")
-                    and not raw.get("briefExplanation")):
-                ids.append(row["id"])
+            has_explanation = bool(str(row["explanation"] or "").strip() or raw.get("explanation")
+                                   or raw.get("explanationBlocks") or raw.get("briefExplanation"))
+            previous += int(has_explanation)
+            reviewed += int(row["review_status"] != "pending")
+            ids.append(row["id"])
+            snapshot.append((row["id"], row["updated_at"], row["pipeline_status"],
+                             row["review_status"], has_explanation))
         active = False
         batch_ids = {r["id"] for r in rows}
         for job in database.conn.execute("SELECT payload_json FROM jobs WHERE job_type IN ('generate','general','general_batch') AND status IN ('queued','running','paused')"):
             payload = json.loads(job[0])
             if payload.get("set_id") == set_id or payload.get("question_pk") in batch_ids:
                 active = True
-        token = hashlib.sha256(json.dumps([set_id, ids]).encode()).hexdigest()
+        token = hashlib.sha256(json.dumps([set_id, snapshot], ensure_ascii=False).encode()).hexdigest()
         return {"set_id": set_id, "name": record["name"], "total": len(rows), "count": len(ids),
-                "skipped": len(rows) - len(ids), "active": active, "token": token, "ids": ids}
+                "skipped": 0, "previous": previous, "reviewed": reviewed,
+                "active": active, "token": token, "ids": ids}
 
     def api_first_generation_preview(self, set_id: str = "") -> dict:
         with DatabaseManager(self._database_path) as database:
@@ -61,8 +66,12 @@ class QuestionsBridge(BridgeBase):
             if result["active"]:
                 raise ValueError("bad_state: 本批次已有生成任务，请先在任务中心处理")
             if not result["count"] or result["token"] != token:
-                raise ValueError("bad_state: 可生成题目已变化，请重新预览")
-            job_id = database.create_job("generate", f"首次生成：{result['name']}（{result['count']} 题）",
+                raise ValueError("bad_state: 题目状态已变化，请重新预览")
+            database.conn.execute("""UPDATE imported_questions SET pipeline_status='queued',
+                retrieval_status='pending', generation_status='pending', match_confidence='pending',
+                review_status='pending', error_message='', updated_at=CURRENT_TIMESTAMP
+                WHERE set_id=?""", (set_id.strip(),))
+            job_id = database.create_job("generate", f"整批重新生成：{result['name']}（{result['count']} 题）",
                                          {"set_id": set_id.strip(), "question_ids": result["ids"], "library_ids": selected})
         return {"job_id": job_id, "count": result["count"]}
 

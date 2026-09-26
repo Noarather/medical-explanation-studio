@@ -12,8 +12,8 @@ beforeEach(() => {
   invokeMock.mockReset()
   invokeMock.mockImplementation((_domain, method) => Promise.resolve(
     method === "filters" ? { sets: [{ id: "a", name: "合成批次", question_count: 600 }], subjects: [], tags: [], sources: [] }
-    : method === "first_generation_preview" ? { set_id: "a", name: "合成批次", total: 600, count: 550, skipped: 50, active: false, token: "snapshot" }
-    : method === "first_generation_start" ? { count: 550 }
+    : method === "first_generation_preview" ? { set_id: "a", name: "合成批次", total: 600, count: 600, skipped: 0, previous: 50, reviewed: 2, active: false, token: "snapshot" }
+    : method === "first_generation_start" ? { count: 600 }
     : { rows: [], total: 0 }))
 })
 const mountPage = () => mount(QuestionsPage, { global: { plugins: [pinia], stubs: { QuestionDetailDrawer: true, LibraryPickerModal: true } } })
@@ -34,7 +34,8 @@ it("整批入口要求选择批次和费用确认，不沿用分页、搜索或�
   await flushPromises()
   await page.get('[data-testid="first-generation"]').trigger("click"); await flushPromises()
   expect(invokeMock).toHaveBeenCalledWith("questions", "first_generation_preview", { set_id: "a" })
-  expect(page.text()).toContain("可首次生成 550 题，跳过 50 题")
+  expect(page.text()).toContain("本次将重新生成 600 题，跳过 0 题")
+  expect(page.text()).toContain("其中 50 题已有解析、2 题已审核")
   expect(page.get('[data-testid="generation-choose"]').attributes("disabled")).toBeDefined()
   await page.get('[data-testid="generation-consent"]').setValue(true)
   await page.get('[data-testid="generation-choose"]').trigger("click")
@@ -43,13 +44,13 @@ it("整批入口要求选择批次和费用确认，不沿用分页、搜索或�
   page.findComponent({ name: "LibraryPickerModal" }).vm.$emit("confirm", [3])
   await flushPromises()
   expect(invokeMock).toHaveBeenCalledWith("questions", "first_generation_start", { set_id: "a", token: "snapshot", library_ids: [3], consent: true })
-  expect(page.text()).not.toContain("可首次生成 550")
+  expect(page.text()).not.toContain("本次将重新生成 600")
 })
 
 it("已有活动任务时禁止整批首次生成", async () => {
   const page = mountPage(); await flushPromises()
   useQuestionsStore().filters.set_id = "a"; await flushPromises()
-  invokeMock.mockResolvedValueOnce({ set_id: "a", name: "合成批次", total: 600, count: 550, skipped: 50, active: true, token: "snapshot" })
+  invokeMock.mockResolvedValueOnce({ set_id: "a", name: "合成批次", total: 600, count: 600, skipped: 0, previous: 50, reviewed: 2, active: true, token: "snapshot" })
   await page.get('[data-testid="first-generation"]').trigger("click"); await flushPromises()
   await page.get('[data-testid="generation-consent"]').setValue(true)
   expect(page.get('[data-testid="generation-choose"]').attributes("disabled")).toBeDefined()

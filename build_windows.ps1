@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location $PSScriptRoot
 
-$Version = "2.2.2"
+$Version = "2.2.3"
 $BuildVenv = Join-Path $PSScriptRoot ".venv-build"
 $BuildPython = Join-Path $BuildVenv "Scripts\python.exe"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"

@@ -33,22 +33,25 @@ def test_whole_batch_snapshot_and_duplicate_guard(setup_batch):
         bridge.api_first_generation_start("batch", preview["token"], [1], True)
 
 
-def test_preserve_existing_and_stale_preview(setup_batch):
+def test_regenerate_all_including_existing_reviewed_and_failed(setup_batch):
     bridge, path = setup_batch
     preview = bridge.api_first_generation_preview("batch")
     with DatabaseManager(path) as db:
         db.conn.execute("UPDATE imported_questions SET explanation='保留解析' WHERE id=1")
         db.conn.execute("UPDATE imported_questions SET raw_json=? WHERE id=2", (json.dumps({"explanationBlocks": [{"text": "保留区块"}]}),))
-        db.conn.execute("UPDATE imported_questions SET review_status='approved' WHERE id=3")
+        db.conn.execute("UPDATE imported_questions SET review_status='approved',pipeline_status='generated',generation_status='generated',generation_mode='textbook' WHERE id=3")
         db.conn.execute("UPDATE imported_questions SET pipeline_status='error' WHERE id=4")
         db.conn.commit()
     with pytest.raises(ValueError, match="已变化"):
         bridge.api_first_generation_start("batch", preview["token"], [1], True)
     updated = bridge.api_first_generation_preview("batch")
-    assert updated["count"] == 501 and updated["skipped"] == 4
+    assert updated["count"] == 505 and updated["skipped"] == 0
+    assert updated["previous"] == 2 and updated["reviewed"] == 1
     result = bridge.api_first_generation_start("batch", updated["token"], [1], True)
     with DatabaseManager(path) as db:
-        assert not set(range(1, 5)).intersection(db.get_job(result["job_id"])["payload"]["question_ids"])
+        assert set(range(1, 5)).issubset(db.get_job(result["job_id"])["payload"]["question_ids"])
+        assert db.conn.execute("SELECT COUNT(*) FROM imported_questions WHERE set_id='batch' AND pipeline_status='queued' AND review_status='pending'").fetchone()[0] == 505
+        # Submission keeps the former answer until the normal worker saves a result.
         assert db.conn.execute("SELECT explanation FROM imported_questions WHERE id=1").fetchone()[0] == "保留解析"
 
 
