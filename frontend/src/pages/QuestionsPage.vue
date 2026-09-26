@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from "vue"
 import { PhMagnifyingGlass, PhTrash } from "@phosphor-icons/vue"
-import type { BridgeError } from "../lib/bridge"
+import { invoke, type BridgeError } from "../lib/bridge"
+import LibraryPickerModal from "../components/review/LibraryPickerModal.vue"
 import { STATUS_OPTIONS, useQuestionsStore } from "../stores/questions"
 import QuestionDetailDrawer from "../components/QuestionDetailDrawer.vue"
 
@@ -24,6 +25,37 @@ const statusLabel = computed({
 const bulkSubject = ref("")
 const confirmDelete = ref(false)
 const confirmPurge = ref(false)
+interface GenerationPreview { set_id: string; name: string; total: number; count: number; skipped: number; active: boolean; token: string }
+const generationPreview = ref<GenerationPreview | null>(null)
+const generationBusy = ref(false)
+const generationConsent = ref(false)
+const generationPicker = ref(false)
+
+async function previewGeneration() {
+  generationBusy.value = true
+  generationPreview.value = null
+  generationConsent.value = false
+  try {
+    generationPreview.value = await invoke<GenerationPreview>("questions", "first_generation_preview", { set_id: store.filters.set_id })
+  } catch (error) {
+    toast((error as BridgeError).message ?? String(error), "destructive")
+  } finally { generationBusy.value = false }
+}
+
+async function startGeneration(libraryIds: number[]) {
+  const preview = generationPreview.value
+  if (!preview || generationBusy.value || !generationConsent.value) return
+  generationBusy.value = true
+  try {
+    const result = await invoke<{ count: number }>("questions", "first_generation_start", {
+      set_id: preview.set_id, token: preview.token, library_ids: libraryIds, consent: generationConsent.value,
+    })
+    generationPreview.value = null
+    toast(`已提交 ${result.count} 道题，请在右上角“任务”查看进度，在“审核工作台”查看解析。`, "success")
+  } catch (error) {
+    toast((error as BridgeError).message ?? String(error), "destructive")
+  } finally { generationBusy.value = false }
+}
 
 onMounted(() => { store.init().catch((error) => toast((error as BridgeError).message ?? String(error), "destructive")) })
 
@@ -106,6 +138,21 @@ function onPurge() {
     </div>
 
     <template v-if="store.tab === 'questions'">
+      <div class="mb-4 rounded-lg border border-border bg-background p-3 text-sm">
+        <button data-testid="first-generation" class="rounded-md bg-primary px-3 py-2 text-onprimary disabled:opacity-50"
+          :disabled="!store.filters.set_id || generationBusy" @click="previewGeneration">整批首次生成解析</button>
+        <span class="ml-3 text-foreground-secondary">先选择下方导入批次；覆盖该批次全部分页，不受搜索、筛选或勾选范围影响。</span>
+        <div v-if="generationPreview" class="mt-3 space-y-2">
+          <p>批次：{{ generationPreview.name }} · 共 {{ generationPreview.total }} 题；可首次生成 {{ generationPreview.count }} 题，跳过 {{ generationPreview.skipped }} 题。</p>
+          <p>仅生成等待中的无解析题目；已有解析、已审核或已处理题目保持不变。</p>
+          <p v-if="generationPreview.active" class="text-destructive">本批次已有生成任务，请先在任务中心处理。</p>
+          <label class="flex items-center gap-2"><input v-model="generationConsent" type="checkbox" data-testid="generation-consent" />我确认处理此批次，题目与候选教材内容会发送至已配置的云端模型并产生费用。</label>
+          <button data-testid="generation-choose" class="rounded-md bg-primary px-3 py-2 text-onprimary disabled:opacity-50"
+            :disabled="generationBusy || !generationConsent || !generationPreview.count || generationPreview.active"
+            @click="generationPicker = true">选择教材并生成</button>
+          <button class="ml-2 rounded-md border border-border px-3 py-2" :disabled="generationBusy" @click="generationPreview = null">取消</button>
+        </div>
+      </div>
       <div class="mb-3 flex flex-wrap items-center gap-2">
         <select v-model="store.filters.set_id" :class="inputClass" @change="run(() => store.applyFilters())">
           <option value="">全部批次</option>
@@ -280,5 +327,6 @@ function onPurge() {
     </template>
 
     <QuestionDetailDrawer v-model:open="store.detailOpen" />
+    <LibraryPickerModal v-model:open="generationPicker" @confirm="startGeneration" />
   </div>
 </template>

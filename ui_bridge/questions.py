@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 from db_manager import DatabaseManager
 from question_format_v2 import make_envelope, normalize_question_v2, write_json_v2
@@ -12,6 +13,58 @@ class QuestionsBridge(BridgeBase):
     def __init__(self, database_path: str, parent=None) -> None:
         super().__init__(parent)
         self._database_path = database_path
+
+    @staticmethod
+    def _first_generation_preview(database, set_id: str) -> dict:
+        record = database.conn.execute("SELECT name FROM question_sets WHERE id=?", (set_id,)).fetchone()
+        if not record:
+            raise ValueError("not_found: 请先选择一个导入批次")
+        rows = database.conn.execute("SELECT * FROM imported_questions WHERE set_id=? ORDER BY id", (set_id,)).fetchall()
+        ids = []
+        for row in rows:
+            raw = json.loads(row["raw_json"] or "{}")
+            if (row["pipeline_status"] == "queued" and row["generation_status"] == "pending"
+                    and row["review_status"] == "pending" and not row["generation_mode"]
+                    and not str(row["explanation"] or "").strip()
+                    and not raw.get("explanation") and not raw.get("explanationBlocks")
+                    and not raw.get("briefExplanation")):
+                ids.append(row["id"])
+        active = False
+        batch_ids = {r["id"] for r in rows}
+        for job in database.conn.execute("SELECT payload_json FROM jobs WHERE job_type IN ('generate','general','general_batch') AND status IN ('queued','running','paused')"):
+            payload = json.loads(job[0])
+            if payload.get("set_id") == set_id or payload.get("question_pk") in batch_ids:
+                active = True
+        token = hashlib.sha256(json.dumps([set_id, ids]).encode()).hexdigest()
+        return {"set_id": set_id, "name": record["name"], "total": len(rows), "count": len(ids),
+                "skipped": len(rows) - len(ids), "active": active, "token": token, "ids": ids}
+
+    def api_first_generation_preview(self, set_id: str = "") -> dict:
+        with DatabaseManager(self._database_path) as database:
+            result = self._first_generation_preview(database, set_id.strip())
+        result.pop("ids")
+        return result
+
+    def api_first_generation_start(self, set_id: str = "", token: str = "",
+                                   library_ids: list | None = None, consent: bool = False) -> dict:
+        if consent is not True:
+            raise ValueError("bad_payload: 请先确认整批生成和云端调用费用")
+        from ui_bridge.library import LibraryBridge
+        selected = sorted({int(value) for value in (library_ids or [])})
+        usable = {row["id"] for row in LibraryBridge(self._database_path).api_list()["libraries"]
+                  if row["index_state"] == "compatible"}
+        if not selected or not set(selected).issubset(usable):
+            raise ValueError("bad_state: 请选择已建立可用索引的教材")
+        with DatabaseManager(self._database_path) as database:
+            database.conn.execute("BEGIN IMMEDIATE")
+            result = self._first_generation_preview(database, set_id.strip())
+            if result["active"]:
+                raise ValueError("bad_state: 本批次已有生成任务，请先在任务中心处理")
+            if not result["count"] or result["token"] != token:
+                raise ValueError("bad_state: 可生成题目已变化，请重新预览")
+            job_id = database.create_job("generate", f"首次生成：{result['name']}（{result['count']} 题）",
+                                         {"set_id": set_id.strip(), "question_ids": result["ids"], "library_ids": selected})
+        return {"job_id": job_id, "count": result["count"]}
 
     # --- browsing ---
 

@@ -382,6 +382,11 @@ def run(report_path, *, native_scroll=False):
                 if not window.view.grab().save(str(image)):
                     raise RuntimeError("Could not save UI screenshot")
                 report["checks"].append({"route": route, "expected": expected, "alerts": alerts or []})
+                if route == "/questions":
+                    guarded = js("Boolean(document.querySelector('[data-testid=first-generation]')?.disabled)")
+                    if not guarded:
+                        raise RuntimeError("First generation must require an explicit batch")
+                    report["firstGeneration"] = {"entryVisible": True, "requiresBatch": True, "live_api": False}
             report["importRepair"] = check_import_repair(app, window, js, folder, report_path)
             report["textbookBatch"] = check_textbook_import(app, window, js, folder, report_path)
             report["indexRefresh"] = check_index_refresh(app, window, js, report_path)
